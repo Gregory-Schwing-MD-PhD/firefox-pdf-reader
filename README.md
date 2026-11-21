@@ -1,5 +1,7 @@
 # Firefox PDF Reader (full screen)
 
+[![test](https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/actions/workflows/test.yml/badge.svg)](https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/actions/workflows/test.yml)
+
 A distraction-free PDF reader built from Firefox's built-in PDF viewer, for Windows, macOS, Linux and ChromeOS. Double-click any PDF and it opens:
 
 - **Full screen**, with no browser tabs, address bar or menus (Firefox kiosk mode)
@@ -12,10 +14,20 @@ It runs in its own Firefox profile, so your normal Firefox (bookmarks, extension
 
 | Platform | Script | Tested |
 | --- | --- | --- |
-| Windows 10 / 11 | [`windows/install.ps1`](windows/install.ps1) | Yes, Windows 11 |
-| macOS | [`macos/install.sh`](macos/install.sh) | Not yet |
-| Linux: Ubuntu, Debian, Fedora, Arch, Mint, Pop!_OS, openSUSE… | [`linux/install.sh`](linux/install.sh) | Not yet |
-| ChromeOS (Chromebooks) | [`chromeos/install.sh`](chromeos/install.sh) | Not yet |
+| Windows 10 / 11 | [`windows/install.ps1`](windows/install.ps1) | Windows 11 PC, plus CI on Windows Server |
+| macOS | [`macos/install.sh`](macos/install.sh) | CI on macOS 15 and the latest macOS |
+| Linux: Ubuntu, Debian, Fedora, Arch, Mint, Pop!_OS, openSUSE… | [`linux/install.sh`](linux/install.sh) | CI on Ubuntu 24.04 |
+| ChromeOS (Chromebooks) | [`chromeos/install.sh`](chromeos/install.sh) | CI in Debian 12, set up like ChromeOS's Linux environment |
+
+Every push runs [the test workflow](.github/workflows/test.yml) on GitHub Actions. For each platform it:
+
+1. runs the installer
+2. checks the reader is registered, and is the default PDF app where the OS allows a script to set that
+3. opens a test PDF and confirms Firefox started full screen with the reader's settings
+4. saves a screenshot, which you can download from the run's **Artifacts**
+5. uninstalls
+
+GitHub can't run ChromeOS itself, so a real Chromebook hasn't been tried.
 
 None of the scripts need administrator rights. Everything is installed for the current user only, except Firefox itself on ChromeOS.
 
@@ -75,6 +87,8 @@ The script does the following:
 1. Creates the profile in `~/Library/Application Support/FirefoxPDF`.
 2. Builds **Firefox PDF Reader.app** in `~/Applications`, a small AppleScript app with Firefox's icon.
 3. Sets it as the default app for PDFs, using [`duti`](https://github.com/moretension/duti) if you have it, or macOS's own API if not.
+
+On recent macOS, Finder then asks whether `.pdf` files should open with **Firefox PDF Reader** or keep using Preview. Click **Use "Firefox PDF Reader"**.
 
 If the default didn't take, set it by hand:
 

@@ -1,7 +1,8 @@
 /* Hide Firefox's PDF viewer toolbar and sidebar so only pages show */
 #toolbarContainer,
 .toolbar,
-#sidebarContainer {
+#sidebarContainer,
+#pdfFeaturesNotification {  /* "new PDF features" notice; showed at the page's top corners */
   display: none !important;
 }
 #outerContainer {
