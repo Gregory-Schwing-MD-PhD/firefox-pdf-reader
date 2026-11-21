@@ -1,0 +1,58 @@
+# Records the README animation: the real reader (installed with
+# linux/install.sh) opening docs/example.pdf and scrolling through it.
+# Run it from the Actions tab; download the "preview" artifact and commit
+# preview.gif to docs/.
+name: record-preview
+on: workflow_dispatch
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    env:
+      DISPLAY: ":99"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up a screen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox xdotool ffmpeg xdg-utils
+          Xvfb :99 -screen 0 1440x900x24 &
+          sleep 2
+          openbox &
+          sleep 1
+
+      - name: Install the reader and open the example paper
+        run: |
+          sh linux/install.sh
+          cp docs/example.pdf "$RUNNER_TEMP/example.pdf"
+          "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/example.pdf" > /dev/null 2>&1 &
+          sleep 20   # first start of a fresh profile, then let pages render
+
+      - name: Record scrolling
+        run: |
+          ffmpeg -y -loglevel error -f x11grab -video_size 1440x900 -framerate 30 -i :99 -t 16 "$RUNNER_TEMP/rec.mp4" &
+          REC=$!
+          sleep 1.5
+          xdotool mousemove 720 450
+          # Read the title page, then scroll down in smooth bursts, like a person reading
+          for burst in 1 2 3 4 5 6; do
+            for i in 1 2 3 4 5 6; do xdotool click 5; sleep 0.06; done
+            sleep 1.4
+          done
+          wait $REC
+
+      - name: Make the GIF
+        run: |
+          mkdir -p out
+          ffmpeg -y -loglevel error -i "$RUNNER_TEMP/rec.mp4" \
+            -vf "fps=15,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+            -loop 0 out/preview.gif
+          # A few still frames, to check the recording
+          for t in 1 5 9 14; do ffmpeg -y -loglevel error -ss $t -i "$RUNNER_TEMP/rec.mp4" -frames:v 1 "out/frame-$t.png"; done
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview
+          path: out/
