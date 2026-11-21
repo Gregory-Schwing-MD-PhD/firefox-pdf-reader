@@ -13,7 +13,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/prof/chrome"
           cp profile/user.js "$RUNNER_TEMP/prof/"
           cp profile/chrome/*.css "$RUNNER_TEMP/prof/chrome/"
-          cat > "$RUNNER_TEMP/inspect.py" <<'EOF'
+          cat > "$RUNNER_TEMP/probe_reader.py" <<'EOF'
           import json, os, sys, time
           from selenium import webdriver
           from selenium.webdriver.firefox.options import Options
@@ -40,4 +40,4 @@ jobs:
           print(d.execute_script(js))
           d.quit()
           EOF
-          python3 "$RUNNER_TEMP/inspect.py" "$RUNNER_TEMP/prof" "$RUNNER_TEMP/sample.pdf"
+          python3 "$RUNNER_TEMP/probe_reader.py" "$RUNNER_TEMP/prof" "$RUNNER_TEMP/sample.pdf"
