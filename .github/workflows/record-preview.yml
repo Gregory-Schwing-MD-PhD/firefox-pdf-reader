@@ -33,7 +33,14 @@ jobs:
           sleep 3
           # The start people actually see
           "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/example.pdf" > /dev/null 2>&1 &
-          sleep 12
+          # Wait until the first page is drawn (a blank dark screen compresses to a tiny PNG)
+          sudo apt-get install -y imagemagick > /dev/null
+          for i in $(seq 1 90); do
+            import -window root "$RUNNER_TEMP/probe.png"
+            [ "$(stat -c %s "$RUNNER_TEMP/probe.png")" -gt 60000 ] && break
+            sleep 1
+          done
+          echo "page drawn after ~${i}s"; sleep 3
 
       - name: Record scrolling
         run: |
@@ -42,9 +49,9 @@ jobs:
           REC=$!
           sleep 2
           # Read the title page, then scroll down in smooth bursts, like a person reading
-          for burst in 1 2 3 4 5; do
+          for burst in 1 2 3 4; do
             for i in 1 2 3 4 5 6; do xdotool click 5; sleep 0.06; done
-            sleep 1.6
+            sleep 2.2
           done
           wait $REC
 
@@ -57,7 +64,7 @@ jobs:
           # Exactly 640x400: the 1440x900 (16:10) screen, scaled with nothing cropped or padded
           ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 out/preview.gif
           # A few still frames, to check the recording
-          for t in 0.5 4 8 12; do ffmpeg -y -loglevel error -ss $t -i "$RUNNER_TEMP/rec.mp4" -frames:v 1 "out/frame-$t.png"; done
+          for t in 0.5 3 6 9 12; do ffmpeg -y -loglevel error -ss $t -i "$RUNNER_TEMP/rec.mp4" -frames:v 1 "out/frame-$t.png"; done
           ls -la out
 
       - uses: actions/upload-artifact@v4
