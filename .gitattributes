@@ -3,3 +3,5 @@
 *.ps1 text eol=crlf
 *.cs  text eol=crlf
 *.cmd text eol=crlf
+linux/package/firefox-pdf-reader text eol=lf
+*.applescript text eol=lf

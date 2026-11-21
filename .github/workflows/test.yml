@@ -104,13 +104,17 @@ jobs:
           ls -la "$PROFILE" "$PROFILE/chrome"
           HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
           echo "PDF handler: $HANDLER"
-          [ "$HANDLER" = "/Applications/Firefox PDF Reader.app" ]
+          # Newer macOS waits for the person to click "Use Firefox PDF Reader",
+          # which a test can't do; older macOS switches straight away.
+          if [ "$HANDLER" = "/Applications/Firefox PDF Reader.app" ]; then echo "IS_DEFAULT=1" >> "$GITHUB_ENV"
+          else echo "::notice::Default not switched yet: macOS is asking the user to confirm"; fi
           # Close the welcome dialog
           pkill -f "Firefox PDF Reader.app" || true
 
       - name: Double-click a PDF
         run: |
-          open "$RUNNER_TEMP/sample.pdf"
+          if [ "${IS_DEFAULT:-}" = 1 ]; then open "$RUNNER_TEMP/sample.pdf"
+          else open -a "/Applications/Firefox PDF Reader.app" "$RUNNER_TEMP/sample.pdf"; fi
           for i in $(seq 1 60); do pgrep -f -- "--kiosk.*sample.pdf" >/dev/null && break; sleep 1; done
           ps -axo command | grep -- "--kiosk" | grep -v grep | grep -q "Application Support/FirefoxPDF"
 
