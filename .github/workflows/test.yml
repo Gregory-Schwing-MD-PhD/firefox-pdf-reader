@@ -1,0 +1,258 @@
+# Installs the reader on real macOS, Windows and Ubuntu runners and in a
+# Debian container set up like ChromeOS's Linux environment, opens a test PDF
+# through the OS's default-app mechanism, checks Firefox started in kiosk mode
+# with the reader's profile, and saves a screenshot of what's on screen.
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make sure Firefox is installed
+        run: |
+          [ -d /Applications/Firefox.app ] || brew install --cask firefox
+          defaults read /Applications/Firefox.app/Contents/Info.plist CFBundleShortVersionString
+
+      - name: Install the reader
+        run: ./macos/install.sh
+
+      - name: Check the app bundle
+        run: |
+          APP="$HOME/Applications/Firefox PDF Reader.app"
+          test -d "$APP"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDocumentTypes:0:LSItemContentTypes:0" "$APP/Contents/Info.plist" | grep -qx com.adobe.pdf
+          codesign --verify --verbose "$APP"
+
+      - name: Check it is the default PDF app
+        run: |
+          python3 tests/make_sample_pdf.py "$RUNNER_TEMP/sample.pdf"
+          HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
+          echo "PDF handler: $HANDLER"
+          [ "$HANDLER" = "$HOME/Applications/Firefox PDF Reader.app" ]
+
+      - name: Open the PDF like a double-click
+        run: |
+          open "$RUNNER_TEMP/sample.pdf"
+          for i in $(seq 1 60); do
+            pgrep -f -- "--kiosk.*sample.pdf" >/dev/null && break; sleep 1
+          done
+          ps -axo command | grep -- "--kiosk" | grep -v grep
+          ps -axo command | grep -- "--kiosk" | grep -q "Application Support/FirefoxPDF"
+
+      - name: Check Firefox loaded the reader settings
+        run: |
+          PREFS="$HOME/Library/Application Support/FirefoxPDF/prefs.js"
+          for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS"
+
+      - name: Screenshot
+        if: always()
+        run: |
+          sleep 10
+          screencapture -x "$RUNNER_TEMP/screenshot-${{ matrix.os }}.png" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-${{ matrix.os }}
+          path: ${{ runner.temp }}/screenshot-*.png
+          if-no-files-found: ignore
+
+      - name: Uninstall
+        run: |
+          pkill -f -- "--kiosk" || true
+          sleep 2
+          ./macos/uninstall.sh --remove-profile
+          test ! -e "$HOME/Applications/Firefox PDF Reader.app"
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb imagemagick xdg-utils desktop-file-utils
+          command -v firefox && firefox --version
+
+      - name: Install the reader
+        run: ./linux/install.sh
+
+      - name: Check it is the default PDF app
+        run: |
+          test -x "$HOME/.local/bin/firefox-pdf-reader"
+          desktop-file-validate "$HOME/.local/share/applications/firefox-pdf-reader.desktop"
+          [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
+
+      - name: Open the PDF through the desktop entry
+        run: |
+          python3 tests/make_sample_pdf.py "$RUNNER_TEMP/sample.pdf"
+          Xvfb :99 -screen 0 1600x1000x24 &
+          export DISPLAY=:99
+          sleep 2
+          gtk-launch firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" || "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/sample.pdf" &
+          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
+          ps -eo args | grep -- "--kiosk" | grep -v grep
+          ps -eo args | grep -- "--kiosk" | grep -q "firefox-pdf-reader"
+
+      - name: Check Firefox loaded the reader settings
+        run: |
+          PREFS="$(sed -n 's/.*-profile "\([^"]*\)".*/\1/p' "$HOME/.local/bin/firefox-pdf-reader")/prefs.js"
+          echo "$PREFS"
+          for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS"
+
+      - name: Screenshot
+        if: always()
+        run: |
+          sleep 10
+          DISPLAY=:99 import -window root "$RUNNER_TEMP/screenshot-ubuntu.png" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-ubuntu
+          path: ${{ runner.temp }}/screenshot-*.png
+          if-no-files-found: ignore
+
+      - name: Uninstall
+        run: |
+          pkill -f -- "--kiosk" || true
+          sleep 2
+          ./linux/uninstall.sh --remove-profile
+          test ! -e "$HOME/.local/bin/firefox-pdf-reader"
+
+  # ChromeOS's Linux environment (Crostini) is a Debian 12 container. GitHub
+  # can't run ChromeOS itself, so this runs the ChromeOS installer in Debian 12
+  # with Crostini's marker directory present.
+  chromeos:
+    runs-on: ubuntu-24.04
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up a Crostini-like container
+        run: |
+          apt-get update
+          apt-get install -y sudo python3 xvfb imagemagick xdg-utils desktop-file-utils procps
+          mkdir -p /opt/google/cros-containers
+
+      - name: Install the reader (installs Firefox ESR first)
+        run: ./chromeos/install.sh
+
+      - name: Check it is the default PDF app
+        run: |
+          command -v firefox-esr
+          [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
+
+      - name: Open the PDF
+        run: |
+          python3 tests/make_sample_pdf.py /tmp/sample.pdf
+          Xvfb :99 -screen 0 1600x1000x24 &
+          export DISPLAY=:99
+          sleep 2
+          "$HOME/.local/bin/firefox-pdf-reader" /tmp/sample.pdf &
+          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
+          ps -eo args | grep -- "--kiosk" | grep -v grep
+
+      - name: Check Firefox loaded the reader settings
+        run: |
+          PREFS="$(sed -n 's/.*-profile "\([^"]*\)".*/\1/p' "$HOME/.local/bin/firefox-pdf-reader")/prefs.js"
+          echo "$PREFS"
+          for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS"
+
+      - name: Screenshot
+        if: always()
+        run: |
+          sleep 10
+          DISPLAY=:99 import -window root /tmp/screenshot-chromeos.png || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-chromeos
+          path: /tmp/screenshot-chromeos.png
+          if-no-files-found: ignore
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make sure Firefox is installed
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:ProgramFiles\Mozilla Firefox\firefox.exe")) { choco install firefox -y --no-progress }
+          (Get-Item "$env:ProgramFiles\Mozilla Firefox\firefox.exe").VersionInfo.ProductVersion
+
+      - name: Install the reader
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\windows\install.ps1 -SkipDefaultAppsPage
+
+      - name: Check the registration
+        shell: pwsh
+        run: |
+          $exe = "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe"
+          if (-not (Test-Path $exe)) { throw "launcher missing" }
+          (Get-ItemProperty 'HKCU:\Software\Classes\FirefoxPDFReader\shell\open\command').'(default)'
+          (Get-ItemProperty 'HKCU:\Software\RegisteredApplications').FirefoxPDFReader
+          Get-ItemProperty 'HKCU:\Software\Classes\.pdf\OpenWithProgids' -Name FirefoxPDFReader | Out-Null
+
+      - name: Open the PDF with the launcher
+        shell: pwsh
+        run: |
+          python tests/make_sample_pdf.py "$env:RUNNER_TEMP\sample.pdf"
+          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:RUNNER_TEMP\sample.pdf`""
+          for ($i = 0; $i -lt 60; $i++) {
+            $p = Get-CimInstance Win32_Process -Filter "Name='firefox.exe'" | Where-Object { $_.CommandLine -match '--kiosk' }
+            if ($p) { break }; Start-Sleep 1
+          }
+          $p | Select-Object -First 1 -ExpandProperty CommandLine
+          if (-not ($p.CommandLine -match 'FirefoxPDF')) { throw "Firefox was not started with the reader profile" }
+
+      - name: Check Firefox loaded the reader settings
+        shell: pwsh
+        run: |
+          $prefs = "$env:USERPROFILE\FirefoxPDF\prefs.js"
+          for ($i = 0; $i -lt 60; $i++) { if ((Test-Path $prefs) -and (Select-String -Path $prefs -Pattern 'pdfjs.defaultZoomValue' -Quiet)) { break }; Start-Sleep 1 }
+          Select-String -Path $prefs -Pattern 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' | ForEach-Object Line
+
+      - name: Screenshot
+        if: always()
+        shell: pwsh
+        run: |
+          Start-Sleep 10
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:RUNNER_TEMP\screenshot-windows.png")
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-windows
+          path: ${{ runner.temp }}/screenshot-windows.png
+          if-no-files-found: ignore
+
+      - name: Uninstall
+        shell: powershell
+        run: |
+          Get-Process firefox -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
+          powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile
+          if (Test-Path 'HKCU:\Software\Classes\FirefoxPDFReader') { throw "registry entries left behind" }

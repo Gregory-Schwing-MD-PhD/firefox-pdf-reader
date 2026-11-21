@@ -30,7 +30,7 @@ if ! command -v firefox-esr >/dev/null 2>&1 && ! command -v firefox >/dev/null 2
   sudo apt-get install -y firefox-esr
 fi
 
-"$REPO_DIR/linux/install.sh" "$@"
+sh "$REPO_DIR/linux/install.sh" "$@"
 
 cat <<'EOF'
 

@@ -67,7 +67,7 @@ powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile
 **Needs:** Firefox in Applications, from [mozilla.org](https://www.mozilla.org/firefox/) or `brew install --cask firefox`.
 
 ```sh
-./macos/install.sh
+bash ./macos/install.sh
 ```
 
 The script does the following:
@@ -90,7 +90,7 @@ If the default didn't take, set it by hand:
 **Uninstall:**
 
 ```sh
-./macos/uninstall.sh --remove-profile
+bash ./macos/uninstall.sh --remove-profile
 ```
 
 ## Linux (Ubuntu and others)
@@ -106,7 +106,7 @@ If the default didn't take, set it by hand:
 | Any, via Flatpak | `flatpak install flathub org.mozilla.firefox` |
 
 ```sh
-./linux/install.sh
+sh ./linux/install.sh
 ```
 
 The script does the following:
@@ -136,7 +136,7 @@ On Flatpak, PDFs from anywhere are passed in through the document portal.
 **Uninstall:**
 
 ```sh
-./linux/uninstall.sh --remove-profile
+sh ./linux/uninstall.sh --remove-profile
 ```
 
 ## ChromeOS (Chromebooks)
@@ -148,14 +148,14 @@ Firefox runs in ChromeOS's built-in Linux environment.
 3. Run:
 
    ```sh
-   ./chromeos/install.sh
+   sh ./chromeos/install.sh
    ```
 
    It installs Firefox ESR in the Linux container if needed, then runs the Linux installer.
 4. Make it the default: in the **Files** app, right-click a PDF, choose **Open with → Change default**, and pick **Firefox PDF Reader**.
 5. For smoother scrolling, turn on `chrome://flags/#crostini-gpu-support`, then restart the Chromebook.
 
-To uninstall, run `./linux/uninstall.sh --remove-profile` in the Terminal.
+To uninstall, run `sh ./linux/uninstall.sh --remove-profile` in the Terminal.
 
 ---
 

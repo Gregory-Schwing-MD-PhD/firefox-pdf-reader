@@ -40,4 +40,4 @@ Add-Type -Namespace FirefoxPDFSetup -Name Shell -MemberDefinition `
 [FirefoxPDFSetup.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 
 Write-Host 'Uninstalled. Choose a new default PDF app in Settings > Apps > Default apps.'
-Start-Process 'ms-settings:defaultapps'
+try { Start-Process 'ms-settings:defaultapps' } catch { }
