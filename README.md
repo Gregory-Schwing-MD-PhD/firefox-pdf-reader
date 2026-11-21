@@ -39,14 +39,11 @@ To install from a copy of this repository, or to uninstall, see [INSTALL.md](INS
 
 ## Try it
 
-[![The reader showing the example paper: dark, full screen, nothing but the page](docs/preview.png)](https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/demo.html)
+<a href="https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/demo.html"><img src="docs/preview.gif" width="640" height="400" alt="Firefox PDF Reader scrolling through the example paper: full screen, dark, nothing but the pages"></a>
 
-**[▶ Open the interactive demo](https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/demo.html)**: a browser version of the reader with an example paper open.
-- Scroll through it.
-- Press **F** or double-click for full screen.
-- Come back later: it remembers where you were.
+This is the actual reader, recorded full screen and scaled down to 640 × 400 with nothing cropped, scrolling through the example paper.
 
-GitHub can't run interactive content inside a README, so the picture above links to the demo.
+GitHub doesn't allow interactive content in a README. To scroll the paper yourself, click the animation or open the **[interactive demo](https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/demo.html)**. It remembers where you were, and F or a double-click makes it full screen.
 
 ## Features
 
