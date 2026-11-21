@@ -61,8 +61,15 @@ def main():
         d.execute_script("""
           const s = document.createElement('style');
           s.textContent = '#viewerContainer { scrollbar-width: none !important; }';
-          document.head.append(s);""")
-        time.sleep(2)
+          document.head.append(s);
+          // re-fit "page width" now that no scrollbar takes space
+          window.dispatchEvent(new Event('resize'));""")
+        time.sleep(3)
+        gaps = d.execute_script("""
+          const r = document.querySelector('.page').getBoundingClientRect();
+          return [Math.round(r.left), Math.round(innerWidth - r.right)];""")
+        print(f"page margins left/right: {gaps}", flush=True)
+        assert abs(gaps[0] - gaps[1]) <= 2, f"page not centred: {gaps}"
 
         total = BURST * BURSTS
         positions = list(range(0, total, H)) + [total]
