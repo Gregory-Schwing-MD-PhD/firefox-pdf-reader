@@ -36,6 +36,8 @@ jobs:
           codesign --verify --verbose "$APP"
 
       - name: Check it is the default PDF app
+        id: default
+        continue-on-error: true
         run: |
           python3 tests/make_sample_pdf.py "$RUNNER_TEMP/sample.pdf"
           HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
@@ -44,7 +46,12 @@ jobs:
 
       - name: Open the PDF like a double-click
         run: |
-          open "$RUNNER_TEMP/sample.pdf"
+          # Use the default handler if it was set, otherwise open with the app directly
+          if [ "${{ steps.default.outcome }}" = success ]; then
+            open "$RUNNER_TEMP/sample.pdf"
+          else
+            open -a "$HOME/Applications/Firefox PDF Reader.app" "$RUNNER_TEMP/sample.pdf"
+          fi
           for i in $(seq 1 60); do
             pgrep -f -- "--kiosk.*sample.pdf" >/dev/null && break; sleep 1
           done
@@ -85,8 +92,13 @@ jobs:
       - name: Install test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb imagemagick xdg-utils desktop-file-utils
+          sudo apt-get install -y xvfb openbox imagemagick xdg-utils desktop-file-utils
           command -v firefox && firefox --version
+          # A virtual screen with a window manager (kiosk full screen needs one, as on any desktop)
+          Xvfb :99 -screen 0 1600x1000x24 &
+          sleep 2
+          DISPLAY=:99 openbox &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: Install the reader
         run: ./linux/install.sh
@@ -100,9 +112,6 @@ jobs:
       - name: Open the PDF through the desktop entry
         run: |
           python3 tests/make_sample_pdf.py "$RUNNER_TEMP/sample.pdf"
-          Xvfb :99 -screen 0 1600x1000x24 &
-          export DISPLAY=:99
-          sleep 2
           gtk-launch firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" || "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/sample.pdf" &
           for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
           ps -eo args | grep -- "--kiosk" | grep -v grep
@@ -119,7 +128,7 @@ jobs:
         if: always()
         run: |
           sleep 10
-          DISPLAY=:99 import -window root "$RUNNER_TEMP/screenshot-ubuntu.png" || true
+          import -window root "$RUNNER_TEMP/screenshot-ubuntu.png" || true
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -135,45 +144,52 @@ jobs:
           ./linux/uninstall.sh --remove-profile
           test ! -e "$HOME/.local/bin/firefox-pdf-reader"
 
-  # ChromeOS's Linux environment (Crostini) is a Debian 12 container. GitHub
-  # can't run ChromeOS itself, so this runs the ChromeOS installer in Debian 12
-  # with Crostini's marker directory present.
+  # ChromeOS's Linux environment (Crostini) is a Debian 12 container with a
+  # regular user who has password-less sudo. GitHub can't run ChromeOS itself,
+  # so this recreates that: Debian 12, Crostini's marker directory, and a
+  # normal user running the ChromeOS installer.
   chromeos:
     runs-on: ubuntu-24.04
     container: debian:bookworm
+    env:
+      AS_USER: runuser -u penguin -- env HOME=/home/penguin DISPLAY=:99
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up a Crostini-like container
         run: |
           apt-get update
-          apt-get install -y sudo python3 xvfb imagemagick xdg-utils desktop-file-utils procps
+          apt-get install -y sudo python3 xvfb openbox imagemagick xdg-utils desktop-file-utils procps
           mkdir -p /opt/google/cros-containers
+          useradd -m -s /bin/bash penguin
+          echo 'penguin ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/penguin
+          cp -r "$GITHUB_WORKSPACE" /home/penguin/firefox-pdf-reader
+          chown -R penguin:penguin /home/penguin/firefox-pdf-reader
+          Xvfb :99 -screen 0 1600x1000x24 &
+          sleep 2
+          DISPLAY=:99 openbox &
 
       - name: Install the reader (installs Firefox ESR first)
-        run: ./chromeos/install.sh
+        run: $AS_USER sh /home/penguin/firefox-pdf-reader/chromeos/install.sh
 
       - name: Check it is the default PDF app
         run: |
           command -v firefox-esr
-          [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
+          [ "$($AS_USER xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
 
       - name: Open the PDF
         run: |
-          python3 tests/make_sample_pdf.py /tmp/sample.pdf
-          Xvfb :99 -screen 0 1600x1000x24 &
-          export DISPLAY=:99
-          sleep 2
-          "$HOME/.local/bin/firefox-pdf-reader" /tmp/sample.pdf &
+          $AS_USER python3 /home/penguin/firefox-pdf-reader/tests/make_sample_pdf.py /home/penguin/sample.pdf
+          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/sample.pdf > /tmp/firefox.log 2>&1 &
           for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
-          ps -eo args | grep -- "--kiosk" | grep -v grep
+          ps -eo user,args | grep -- "--kiosk" | grep -v grep
+          ps -eo user,args | grep -- "--kiosk" | grep -q "^penguin"
 
       - name: Check Firefox loaded the reader settings
         run: |
-          PREFS="$(sed -n 's/.*-profile "\([^"]*\)".*/\1/p' "$HOME/.local/bin/firefox-pdf-reader")/prefs.js"
-          echo "$PREFS"
+          PREFS="/home/penguin/.local/share/firefox-pdf-reader/prefs.js"
           for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS"
+          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS" || { cat /tmp/firefox.log; exit 1; }
 
       - name: Screenshot
         if: always()

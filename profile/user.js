@@ -35,3 +35,13 @@ user_pref("browser.startup.homepage_override.mstone", "ignore");
 user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);
 user_pref("browser.tabs.warnOnClose", false);
 user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("browser.startup.upgradeDialog.enabled", false);
+user_pref("browser.shell.setDefaultPDFHandler", false);       // never take over .pdf from the reader
+user_pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", false);
+user_pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", false);
+
+// No usage-data uploads from this profile (also stops the data-reporting notice bar)
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("datareporting.healthreport.uploadEnabled", false);
+user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
+user_pref("app.shield.optoutstudies.enabled", false);

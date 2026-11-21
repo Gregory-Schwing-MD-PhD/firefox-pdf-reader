@@ -111,14 +111,27 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 "$LSREGISTER" -f "$APP_DIR"
 
 # --- 4. Default PDF app --------------------------------------------------------
+# Which app opens PDFs right now (bundle id)
+current_pdf_handler() {
+  osascript -l JavaScript -e "ObjC.import('CoreServices'); ObjC.castRefToObject(\$.LSCopyDefaultRoleHandlerForContentType(\$('com.adobe.pdf'), 0xFFFFFFFF)).js" 2>/dev/null
+}
+
 DEFAULT_SET=0
 if [ "$SET_DEFAULT" = 1 ]; then
   step "Making it the default app for PDFs"
-  if command -v duti >/dev/null 2>&1 && duti -s "$BUNDLE_ID" com.adobe.pdf all; then
-    DEFAULT_SET=1
-  elif osascript -l JavaScript -e "ObjC.import('CoreServices'); \$.LSSetDefaultRoleHandlerForContentType('com.adobe.pdf', \$.kLSRolesAll, '$BUNDLE_ID') === 0" 2>/dev/null | grep -q true; then
-    DEFAULT_SET=1
+  # 1. duti, if installed (brew install duti)
+  command -v duti >/dev/null 2>&1 && duti -s "$BUNDLE_ID" com.adobe.pdf all 2>/dev/null || true
+  # 2. Launch Services API through JavaScript for Automation (built into macOS)
+  if [ "$(current_pdf_handler)" != "$BUNDLE_ID" ]; then
+    osascript -l JavaScript -e "ObjC.import('CoreServices'); \$.LSSetDefaultRoleHandlerForContentType(\$('com.adobe.pdf'), 0xFFFFFFFF, \$('$BUNDLE_ID'))" >/dev/null 2>&1 || true
   fi
+  # 3. The same API through Swift, if the command line tools are installed
+  if [ "$(current_pdf_handler)" != "$BUNDLE_ID" ] && command -v swift >/dev/null 2>&1; then
+    printf 'import CoreServices\n_ = LSSetDefaultRoleHandlerForContentType("com.adobe.pdf" as CFString, .all, "%s" as CFString)\n' "$BUNDLE_ID" \
+      | swift - >/dev/null 2>&1 || true
+  fi
+  [ "$(current_pdf_handler)" = "$BUNDLE_ID" ] && DEFAULT_SET=1
+  echo "    PDFs open with: $(current_pdf_handler)"
 fi
 
 echo
