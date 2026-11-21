@@ -1,0 +1,13 @@
+/* Hide Firefox's PDF viewer toolbar and sidebar so only pages show */
+#toolbarContainer,
+.toolbar,
+#sidebarContainer {
+  display: none !important;
+}
+#outerContainer {
+  --toolbar-height: 0px !important;
+}
+#viewerContainer {
+  inset: 0 !important;
+  top: 0 !important;
+}
