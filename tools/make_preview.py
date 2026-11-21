@@ -39,6 +39,11 @@ def main():
     os.makedirs(os.path.join(prof, "chrome"))
     shutil.copy(os.path.join(repo, "profile", "user.js"), prof)
     shutil.copy(os.path.join(repo, "profile", "chrome", "userContent.css"), os.path.join(prof, "chrome"))
+    # Overlay scrollbars that take no space, as on Windows and macOS
+    # (the capture machine is Linux, where classic scrollbars take 12px)
+    with open(os.path.join(prof, "user.js"), "a") as f:
+        f.write('\nuser_pref("widget.gtk.overlay-scrollbars.enabled", true);\n'
+                'user_pref("ui.useOverlayScrollbars", 1);\n')
 
     o = Options()
     o.add_argument("-headless")
