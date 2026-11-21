@@ -1,73 +1,32 @@
-# Records the README animation: the real reader (installed with
-# linux/install.sh) opening docs/example.pdf and scrolling through it.
-# Run it from the Actions tab; download the "preview" artifact and commit
-# preview.gif to docs/.
+# Builds the README animation (docs/preview.svg) from the real reader:
+# Firefox with the reader's profile files showing docs/example.pdf.
+# Run it from the Actions tab; it commits the new docs/preview.svg.
 name: record-preview
 on: workflow_dispatch
 
 jobs:
   record:
     runs-on: ubuntu-24.04
-    env:
-      DISPLAY: ":99"
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up a screen
+      - name: Build the animation
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb openbox xdotool ffmpeg xdg-utils
-          Xvfb :99 -screen 0 1440x900x24 &
-          sleep 2
-          openbox &
-          sleep 1
-
-      - name: Install the reader and open the example paper
-        run: |
-          sh linux/install.sh
-          cp docs/example.pdf "$RUNNER_TEMP/example.pdf"
-          # First start of a fresh profile does one-time setup; do it off camera
-          "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/example.pdf" > /dev/null 2>&1 &
-          sleep 20
-          pkill -f -- "--kiosk" || true
-          sleep 3
-          # The start people actually see
-          "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/example.pdf" > /dev/null 2>&1 &
-          # Wait until the first page is drawn (a blank dark screen compresses to a tiny PNG)
-          sudo apt-get install -y imagemagick > /dev/null
-          for i in $(seq 1 90); do
-            import -window root "$RUNNER_TEMP/probe.png"
-            [ "$(stat -c %s "$RUNNER_TEMP/probe.png")" -gt 60000 ] && break
-            sleep 1
-          done
-          echo "page drawn after ~${i}s"; sleep 3
-
-      - name: Record scrolling
-        run: |
-          xdotool mousemove 1430 890   # park the pointer in a corner (and it isn't recorded)
-          ffmpeg -y -loglevel error -f x11grab -draw_mouse 0 -video_size 1440x900 -framerate 30 -i :99 -t 13 "$RUNNER_TEMP/rec.mp4" &
-          REC=$!
-          sleep 2
-          # Read the title page, then scroll down in smooth bursts, like a person reading
-          for burst in 1 2 3 4; do
-            for i in 1 2 3 4 5 6; do xdotool click 5; sleep 0.06; done
-            sleep 2.2
-          done
-          wait $REC
-
-      - name: Make the GIF
-        run: |
-          mkdir -p out
-          ffmpeg -y -loglevel error -i "$RUNNER_TEMP/rec.mp4" \
-            -vf "fps=15,scale=640:400:flags=lanczos,split[a][b];[a]palettegen=max_colors=48:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" \
-            -loop 0 out/preview.gif
-          # Exactly 640x400: the 1440x900 (16:10) screen, scaled with nothing cropped or padded
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 out/preview.gif
-          # A few still frames, to check the recording
-          for t in 0.5 3 6 9 12; do ffmpeg -y -loglevel error -ss $t -i "$RUNNER_TEMP/rec.mp4" -frames:v 1 "out/frame-$t.png"; done
-          ls -la out
+          pip install selenium pillow
+          python3 tools/make_preview.py docs/example.pdf docs/preview.svg --frame "$RUNNER_TEMP/first-frame.png"
 
       - uses: actions/upload-artifact@v4
         with:
           name: preview
-          path: out/
+          path: |
+            docs/preview.svg
+            ${{ runner.temp }}/first-frame.png
+
+      - name: Commit it
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/preview.svg
+          git diff --cached --quiet || { git commit -m "Update README animation"; git push; }

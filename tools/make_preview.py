@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Build docs/preview.svg: the README animation of the reader.
+
+Opens the example paper in Firefox with the reader's own profile files
+(user.js + userContent.css), at a 1440x900 viewport, captures the viewer at
+successive scroll positions, stitches them into one tall image, and writes an
+SVG that shows a 1440x900 window onto it (rendered at exactly 640x400, the
+same 16:10 shape, nothing cropped), scrolling the way a mouse wheel does.
+
+An SVG plays by itself with no player controls in a GitHub README (GitHub
+adds a pause button to animated GIFs).
+
+Usage: python3 tools/make_preview.py PDF OUT.svg [--frame OUT.png]
+Needs: Firefox, geckodriver, selenium, pillow.
+"""
+import argparse, base64, io, os, shutil, sys, tempfile, time
+
+from PIL import Image
+from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
+
+W, H = 1440, 900                 # viewport captured (16:10)
+OUT_W, OUT_H = 640, 400          # size shown in the README (exactly W/H scaled)
+BURST = 430                      # pixels per wheel burst
+BURSTS = 5
+HOLD_START, MOVE, PAUSE, HOLD_END = 2.4, 0.55, 1.7, 2.2   # seconds
+
+repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pdf")
+    ap.add_argument("out")
+    ap.add_argument("--frame")
+    a = ap.parse_args()
+
+    prof = tempfile.mkdtemp()
+    os.makedirs(os.path.join(prof, "chrome"))
+    shutil.copy(os.path.join(repo, "profile", "user.js"), prof)
+    shutil.copy(os.path.join(repo, "profile", "chrome", "userContent.css"), os.path.join(prof, "chrome"))
+
+    o = Options()
+    o.add_argument("-headless")
+    o.add_argument("-profile")
+    o.add_argument(prof)
+    d = webdriver.Firefox(options=o)
+    try:
+        # Size the window so the page area is exactly W x H
+        d.set_window_size(W, H)
+        d.get("file://" + os.path.abspath(a.pdf))
+        time.sleep(6)
+        iw, ih = d.execute_script("return [innerWidth, innerHeight]")
+        d.set_window_size(W + (W - iw), H + (H - ih))
+        time.sleep(3)
+        iw, ih = d.execute_script("return [innerWidth, innerHeight]")
+        assert (iw, ih) == (W, H), f"viewport is {iw}x{ih}, wanted {W}x{H}"
+
+        # Overlay scrollbars are hidden while not scrolling on Windows and macOS;
+        # keep them out of the captures.
+        d.execute_script("""
+          const s = document.createElement('style');
+          s.textContent = '#viewerContainer { scrollbar-width: none !important; }';
+          document.head.append(s);""")
+        time.sleep(2)
+
+        total = BURST * BURSTS
+        positions = list(range(0, total, H)) + [total]
+        strip = Image.new("RGB", (W, H + total))
+        for y in positions:
+            d.execute_script("document.getElementById('viewerContainer').scrollTop = arguments[0]", y)
+            # wait for pages in view to finish drawing
+            for _ in range(40):
+                time.sleep(0.5)
+                busy = d.execute_script("""
+                  const v = document.getElementById('viewerContainer').getBoundingClientRect();
+                  return [...document.querySelectorAll('.page')].some(p => {
+                    const r = p.getBoundingClientRect();
+                    return r.bottom > v.top && r.top < v.bottom && !p.querySelector('canvas');
+                  }) || !!document.querySelector('.page .loadingIcon:not(.notVisible)');""")
+                if not busy:
+                    break
+            time.sleep(1.5)
+            actual = d.execute_script("return document.getElementById('viewerContainer').scrollTop")
+            assert round(actual) == y, f"scrolled to {actual}, wanted {y}"
+            shot = Image.open(io.BytesIO(d.get_screenshot_as_png())).convert("RGB")
+            assert shot.size == (W, H), f"screenshot is {shot.size}"
+            strip.paste(shot, (0, y))
+            print(f"captured scrollTop={y}", flush=True)
+    finally:
+        d.quit()
+
+    if a.frame:
+        strip.crop((0, 0, W, H)).save(a.frame)
+
+    buf = io.BytesIO()
+    strip.save(buf, "JPEG", quality=88, optimize=True, progressive=True)
+    data = base64.b64encode(buf.getvalue()).decode()
+
+    # Timeline: hold, then BURSTS eased moves (like smooth wheel scrolling), hold,
+    # then fade to the start and loop.
+    times, values, splines = [0.0], [0], []
+    t = HOLD_START
+    times.append(t); values.append(0); splines.append("0 0 1 1")
+    for i in range(1, BURSTS + 1):
+        t += MOVE
+        times.append(t); values.append(-BURST * i); splines.append("0.25 0.6 0.35 1")   # ease-out
+        t += PAUSE if i < BURSTS else HOLD_END
+        times.append(t); values.append(-BURST * i); splines.append("0 0 1 1")
+    dur = t + 0.6
+    times.append(dur); values.append(-BURST * BURSTS); splines.append("0 0 1 1")
+    key_times = ";".join(f"{x / dur:.4f}" for x in times)
+    key_values = ";".join(f"0 {v}" for v in values)
+    fade_start = (dur - 0.6) / dur
+
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{OUT_W}" height="{OUT_H}" viewBox="0 0 {W} {H}">
+<title>Firefox PDF Reader: the example paper, full screen and dark, scrolling</title>
+<clipPath id="screen"><rect width="{W}" height="{H}"/></clipPath>
+<g clip-path="url(#screen)">
+<rect width="{W}" height="{H}" fill="#1c1b1f"/>
+<image width="{W}" height="{H + total}" preserveAspectRatio="none" xlink:href="data:image/jpeg;base64,{data}">
+<animateTransform attributeName="transform" type="translate" dur="{dur:.2f}s" repeatCount="indefinite" calcMode="spline" keyTimes="{key_times}" values="{key_values}" keySplines="{';'.join(splines)}"/>
+</image>
+<rect width="{W}" height="{H}" fill="#000" opacity="0">
+<animate attributeName="opacity" dur="{dur:.2f}s" repeatCount="indefinite" keyTimes="0;{fade_start:.4f};1" values="0;0;1"/>
+</rect>
+</g>
+</svg>
+'''
+    with open(a.out, "w") as f:
+        f.write(svg)
+    print(f"wrote {a.out}: {len(svg) // 1024} KB, {OUT_W}x{OUT_H}, loop {dur:.1f}s")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
