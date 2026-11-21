@@ -64,7 +64,7 @@
     <p class="detected" id="detected">Detecting your system…</p>
     <div id="panel"></div>
     <div class="tabs" role="tablist" aria-label="Other systems"></div>
-    <p class="note">Needs Firefox; the installer adds it on Windows (winget) and macOS (Homebrew) if it's missing. Nothing needs administrator rights. <a href="https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader#install">Manual install and uninstall</a>.</p>
+    <p class="note">The reader uses Firefox to show PDFs. <a href="https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/blob/main/INSTALL.md">Manual install and uninstall</a> · <a href="https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest">All downloads</a>.</p>
   </section>
 
   <h2>Try it</h2>
@@ -100,6 +100,7 @@
   const BASE = 'https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/install/';
   const SH = `curl -fsSL ${BASE}install.sh | sh`;
   const PS = `powershell -c "irm ${BASE}windows.ps1 | iex"`;
+  const REL = 'https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/';
 
   const systems = {
     windows: {
@@ -113,28 +114,32 @@
     },
     macos: {
       name: 'macOS',
-      html: `${cmd(SH)}
+      html: `<a class="btn" href="${REL}FirefoxPDFReader.dmg">Download for Mac</a>
         <ol class="steps">
-          <li>Click <b>Copy</b>, open <b>Terminal</b> (Spotlight: ⌘ Space, type “Terminal”), paste and press Return.</li>
-          <li>When Finder asks, choose <b>Use “Firefox PDF Reader”</b>.</li>
-        </ol>`
+          <li>Open <b>FirefoxPDFReader.dmg</b> and drag <b>Firefox PDF Reader</b> into <b>Applications</b>.</li>
+          <li>Open <b>Firefox PDF Reader</b> from Applications. It sets itself up; when Finder asks, choose <b>Use “Firefox PDF Reader”</b>.</li>
+          <li>The first time, macOS may say it can't verify the app. Click <b>Done</b>, then go to <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b>. You only do this once.</li>
+        </ol>
+        <p class="note">Needs <a href="https://www.mozilla.org/firefox/">Firefox</a>. Or install from Terminal (also installs Firefox with Homebrew if needed):</p>${cmd(SH)}`
     },
     linux: {
       name: 'Linux',
-      html: `${cmd(SH)}
+      html: `<a class="btn" href="${REL}FirefoxPDFReader.deb">Download .deb</a>
         <ol class="steps">
-          <li>Click <b>Copy</b>, open a terminal, paste and press Enter.</li>
-          <li>It becomes your default PDF app. Works with Firefox from your distribution, Snap or Flatpak.</li>
-        </ol>`
+          <li>For Ubuntu, Debian, Linux Mint and Pop!_OS: open the downloaded <b>FirefoxPDFReader.deb</b> to install it (or run <code>sudo apt install ./FirefoxPDFReader.deb</code>). Firefox is installed with it if needed.</li>
+          <li>It becomes the default PDF app. If PDFs still open elsewhere, right-click a PDF → <b>Open With</b> → <b>Firefox PDF Reader</b> → set as default.</li>
+        </ol>
+        <p class="note">Fedora, Arch, openSUSE and others, or without admin rights (works with Firefox from your distribution, Snap or Flatpak):</p>${cmd(SH)}`
     },
     chromeos: {
       name: 'ChromeOS',
-      html: `${cmd(SH)}
+      html: `<a class="btn" href="${REL}FirefoxPDFReader.deb">Download for Chromebook</a>
         <ol class="steps">
-          <li>Turn on Linux: <b>Settings → About ChromeOS → Developers → Linux development environment</b>.</li>
-          <li>Click <b>Copy</b>, open the <b>Terminal</b> app, paste and press Enter. Firefox is installed for you.</li>
-          <li>In <b>Files</b>, right-click a PDF → <b>Open with → Change default</b> → <b>Firefox PDF Reader</b>.</li>
-        </ol>`
+          <li>Turn on Linux once: <b>Settings → About ChromeOS → Developers → Linux development environment → Turn on</b>.</li>
+          <li>In <b>Files</b>, double-click the downloaded <b>FirefoxPDFReader.deb</b> and choose <b>Install</b>. Firefox comes with it.</li>
+          <li>Right-click any PDF → <b>Open with → Change default</b> → <b>Firefox PDF Reader</b>.</li>
+        </ol>
+        <p class="note">Or paste this into the Terminal app:</p>${cmd(SH)}`
     }
   };
 

@@ -84,6 +84,55 @@ jobs:
           ./macos/uninstall.sh --remove-profile
           test ! -e "$HOME/Applications/Firefox PDF Reader.app"
 
+      # --- The download: FirefoxPDFReader.dmg, installed by dragging ---
+      - name: Build the disk image
+        run: bash ./macos/build-dmg.sh dist "1.0.${{ github.run_number }}"
+
+      - name: Install from the disk image (drag to Applications)
+        run: |
+          hdiutil attach dist/FirefoxPDFReader.dmg -nobrowse -mountpoint /Volumes/FirefoxPDFReader
+          ls -la /Volumes/FirefoxPDFReader
+          test -L /Volumes/FirefoxPDFReader/Applications
+          cp -R "/Volumes/FirefoxPDFReader/Firefox PDF Reader.app" /Applications/
+          hdiutil detach /Volumes/FirefoxPDFReader
+
+      - name: First launch sets it up
+        run: |
+          open -a "/Applications/Firefox PDF Reader.app"
+          PROFILE="$HOME/Library/Application Support/FirefoxPDF"
+          for i in $(seq 1 60); do [ -f "$PROFILE/.default-app" ] && break; sleep 1; done
+          ls -la "$PROFILE" "$PROFILE/chrome"
+          HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
+          echo "PDF handler: $HANDLER"
+          [ "$HANDLER" = "/Applications/Firefox PDF Reader.app" ]
+          # Close the welcome dialog
+          pkill -f "Firefox PDF Reader.app" || true
+
+      - name: Double-click a PDF
+        run: |
+          open "$RUNNER_TEMP/sample.pdf"
+          for i in $(seq 1 60); do pgrep -f -- "--kiosk.*sample.pdf" >/dev/null && break; sleep 1; done
+          ps -axo command | grep -- "--kiosk" | grep -v grep | grep -q "Application Support/FirefoxPDF"
+
+      - name: Screenshot (disk image install)
+        if: always()
+        run: |
+          sleep 10
+          screencapture -x "$RUNNER_TEMP/dmg-screenshot-${{ matrix.os }}.png" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dmg-screenshot-${{ matrix.os }}
+          path: ${{ runner.temp }}/dmg-screenshot-*.png
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'macos-15'
+        with:
+          name: package-dmg
+          path: dist/FirefoxPDFReader.dmg
+
   linux:
     runs-on: ubuntu-24.04
     steps:
@@ -151,6 +200,49 @@ jobs:
           [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
           ./linux/uninstall.sh --remove-profile
 
+      # --- The download: firefox-pdf-reader .deb, installed by double-clicking ---
+      - name: Build the .deb
+        run: sh linux/package/build-deb.sh dist "1.0.${{ github.run_number }}"
+
+      - name: Install the .deb (what double-clicking it does)
+        run: |
+          rm -f "$HOME/.config/mimeapps.list"   # forget the per-user default from the earlier tests
+          sudo apt-get install -y ./dist/firefox-pdf-reader_*_all.deb
+          dpkg -L firefox-pdf-reader
+          grep pdf /etc/xdg/mimeapps.list
+          [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
+
+      - name: Double-click a PDF
+        run: |
+          pkill -f -- "--kiosk" || true; sleep 2
+          gtk-launch firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" || firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" &
+          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
+          ps -eo args | grep -- "--kiosk" | grep -v grep | grep -q "firefox-pdf-reader"
+
+      - name: Screenshot (.deb install)
+        if: always()
+        run: |
+          sleep 10
+          import -window root "$RUNNER_TEMP/deb-screenshot-ubuntu.png" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deb-screenshot-ubuntu
+          path: ${{ runner.temp }}/deb-screenshot-ubuntu.png
+          if-no-files-found: ignore
+
+      - name: Remove the .deb
+        run: |
+          pkill -f -- "--kiosk" || true
+          sudo apt-get remove -y firefox-pdf-reader
+          ! grep -q firefox-pdf-reader /etc/xdg/mimeapps.list
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-deb
+          path: dist/firefox-pdf-reader_*_all.deb
+
   # ChromeOS's Linux environment (Crostini) is a Debian 12 container with a
   # regular user who has password-less sudo. GitHub can't run ChromeOS itself,
   # so this recreates that: Debian 12, Crostini's marker directory, and a
@@ -210,6 +302,22 @@ jobs:
           name: screenshot-chromeos
           path: /tmp/screenshot-chromeos.png
           if-no-files-found: ignore
+
+      # --- The .deb, as ChromeOS's Files app installs it ("Install with Linux") ---
+      - name: Install the .deb
+        run: |
+          pkill -f -- "--kiosk" || true
+          sh linux/package/build-deb.sh /tmp/dist "1.0.${{ github.run_number }}"
+          sh /home/penguin/firefox-pdf-reader/linux/uninstall.sh --remove-profile || true
+          rm -f /home/penguin/.config/mimeapps.list
+          apt-get install -y /tmp/dist/firefox-pdf-reader_*_all.deb
+          [ "$($AS_USER xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
+
+      - name: Open a PDF with the installed package
+        run: |
+          $AS_USER firefox-pdf-reader /home/penguin/sample.pdf > /tmp/firefox-deb.log 2>&1 &
+          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
+          ps -eo user,args | grep -- "--kiosk" | grep -v grep | grep -q "^penguin" || { cat /tmp/firefox-deb.log; exit 1; }
 
   windows:
     runs-on: windows-latest
@@ -287,3 +395,39 @@ jobs:
           if (-not (Test-Path "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe")) { throw "launcher missing" }
           if (-not (Test-Path 'HKCU:\Software\Classes\FirefoxPDFReader')) { throw "not registered" }
           powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile
+
+  # After every platform passes on main, publish the downloads to the
+  # "latest" release, so these links always serve the newest version:
+  #   https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader.dmg
+  #   https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader.deb
+  #   https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader-Setup.cmd
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [macos, linux, chromeos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the downloads
+        run: |
+          mkdir -p upload
+          cp dist/FirefoxPDFReader.dmg upload/FirefoxPDFReader.dmg
+          cp dist/firefox-pdf-reader_*_all.deb upload/FirefoxPDFReader.deb
+          cp docs/install/FirefoxPDFReader-Setup.cmd upload/FirefoxPDFReader-Setup.cmd
+          ls -la upload
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest --title "Firefox PDF Reader" --latest \
+              --notes "Downloads for Firefox PDF Reader. Get the right one for your computer at https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/"
+          fi
+          gh release upload latest upload/* --clobber
+          gh release edit latest --notes "Downloads for Firefox PDF Reader, built from ${GITHUB_SHA::7} (run ${{ github.run_number }}). Get the right one for your computer at https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/"

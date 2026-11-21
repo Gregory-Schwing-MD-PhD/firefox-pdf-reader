@@ -1,0 +1,57 @@
+#!/bin/sh
+# Firefox PDF Reader launcher (installed by the .deb package as
+# /usr/bin/firefox-pdf-reader). Opens PDFs in the reader's own Firefox
+# profile, full screen (kiosk mode). The first time it runs for a user it
+# also makes itself that user's default PDF app.
+set -eu
+
+SHARE=/usr/share/firefox-pdf-reader
+DESKTOP_ID=firefox-pdf-reader.desktop
+
+fail() {
+  msg="$1"
+  if command -v zenity >/dev/null 2>&1; then zenity --error --title="Firefox PDF Reader" --text="$msg" 2>/dev/null || true
+  elif command -v notify-send >/dev/null 2>&1; then notify-send "Firefox PDF Reader" "$msg" || true
+  fi
+  echo "$msg" >&2
+  exit 1
+}
+
+# Which Firefox, and where its profile may live:
+#   Snap:    not in hidden folders of ~, so use the snap's own folder
+#   Flatpak: the app's data folder in ~/.var
+if command -v snap >/dev/null 2>&1 && snap list firefox >/dev/null 2>&1; then
+  set -- /snap/bin/firefox "$@"; KIND=snap
+  PROFILE="$HOME/snap/firefox/common/firefox-pdf-reader"
+elif command -v firefox-esr >/dev/null 2>&1; then
+  set -- "$(command -v firefox-esr)" "$@"; KIND=native
+  PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/firefox-pdf-reader"
+elif command -v firefox >/dev/null 2>&1; then
+  set -- "$(command -v firefox)" "$@"; KIND=native
+  PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/firefox-pdf-reader"
+elif command -v flatpak >/dev/null 2>&1 && flatpak info org.mozilla.firefox >/dev/null 2>&1; then
+  KIND=flatpak
+  PROFILE="$HOME/.var/app/org.mozilla.firefox/data/firefox-pdf-reader"
+else
+  fail "Firefox PDF Reader needs Firefox. Install Firefox, then open the PDF again."
+fi
+
+# Reader settings (refreshed every run, so package updates apply)
+mkdir -p "$PROFILE/chrome"
+cp "$SHARE/profile/user.js" "$PROFILE/"
+cp "$SHARE/profile/chrome/userContent.css" "$PROFILE/chrome/"
+
+# First run for this user: make the reader their default PDF app
+if [ ! -e "$PROFILE/.default-set" ] && command -v xdg-mime >/dev/null 2>&1; then
+  xdg-mime default "$DESKTOP_ID" application/pdf 2>/dev/null || true
+  : > "$PROFILE/.default-set"
+fi
+
+if [ "$KIND" = flatpak ]; then
+  # --file-forwarding passes PDFs from anywhere through the document portal
+  exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE" --kiosk @@ "$@" @@
+fi
+
+FF="$1"; shift
+export MOZ_USE_XINPUT2=1   # smooth touchpad and high-resolution wheel scrolling on X11
+exec "$FF" -profile "$PROFILE" --kiosk "$@"

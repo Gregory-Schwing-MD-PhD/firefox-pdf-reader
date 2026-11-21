@@ -1,143 +1,45 @@
 #!/bin/bash
-# Firefox PDF Reader (full screen) for macOS.
+# Firefox PDF Reader (full screen) for macOS, installed from a copy of this
+# repository. (Most people should use FirefoxPDFReader.dmg instead: open it
+# and drag the app into Applications.)
 #
-# 1. Creates a dedicated Firefox profile with the PDF viewer settings and a
-#    style sheet that hides the toolbar.
-# 2. Builds "Firefox PDF Reader.app" in ~/Applications: a small AppleScript
-#    app that opens PDFs in that profile in kiosk (full-screen) mode.
-# 3. Makes it the default app for PDFs.
+# Builds "Firefox PDF Reader.app" into ~/Applications and runs its setup:
+# the reader's Firefox profile in ~/Library/Application Support/FirefoxPDF,
+# and the app as the default for PDFs.
 #
-# Usage:  ./macos/install.sh [--profile-dir DIR] [--no-default]
+# Usage:  bash ./macos/install.sh
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROFILE_DIR="$HOME/Library/Application Support/FirefoxPDF"
-APP_DIR="$HOME/Applications/Firefox PDF Reader.app"
 BUNDLE_ID="io.github.firefox-pdf-reader"
-SET_DEFAULT=1
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --profile-dir) PROFILE_DIR="$2"; shift 2 ;;
-    --no-default)  SET_DEFAULT=0; shift ;;
-    -h|--help)     sed -n '2,12p' "$0"; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
-  esac
-done
-
 step() { printf '\033[36m==> %s\033[0m\n' "$1"; }
 
-# --- 1. Find Firefox ---------------------------------------------------------
 step "Looking for Firefox"
 FIREFOX_APP=""
 for c in "/Applications/Firefox.app" "$HOME/Applications/Firefox.app"; do
   [ -d "$c" ] && { FIREFOX_APP="$c"; break; }
 done
-if [ -z "$FIREFOX_APP" ]; then
-  FIREFOX_APP="$(mdfind "kMDItemCFBundleIdentifier == 'org.mozilla.firefox'" 2>/dev/null | head -n1 || true)"
-fi
+[ -n "$FIREFOX_APP" ] || FIREFOX_APP="$(mdfind "kMDItemCFBundleIdentifier == 'org.mozilla.firefox'" 2>/dev/null | head -n1 || true)"
 if [ -z "$FIREFOX_APP" ] || [ ! -x "$FIREFOX_APP/Contents/MacOS/firefox" ]; then
   echo "Firefox not found. Install it from https://www.mozilla.org/firefox/ or: brew install --cask firefox" >&2
   exit 1
 fi
-FIREFOX_BIN="$FIREFOX_APP/Contents/MacOS/firefox"
 echo "    $FIREFOX_APP"
 
-# --- 2. Profile --------------------------------------------------------------
-step "Writing Firefox profile files to $PROFILE_DIR"
-mkdir -p "$PROFILE_DIR/chrome"
-cp "$REPO_DIR/profile/user.js" "$PROFILE_DIR/"
-cp "$REPO_DIR/profile/chrome/userContent.css" "$PROFILE_DIR/chrome/"
+step "Building Firefox PDF Reader.app in ~/Applications"
+APP="$(bash "$REPO_DIR/macos/build-app.sh" "$HOME/Applications")"
+echo "    $APP"
 
-# --- 3. Launcher app -----------------------------------------------------------
-step "Building $APP_DIR"
-mkdir -p "$HOME/Applications"
-rm -rf "$APP_DIR"
-
-# AppleScript string literals: escape backslashes and double quotes
-as_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-FF_AS="$(as_escape "$FIREFOX_BIN")"
-PROF_AS="$(as_escape "$PROFILE_DIR")"
-
-SCRIPT_FILE="$(mktemp -t firefox-pdf-reader).applescript"
-cat > "$SCRIPT_FILE" <<EOF
--- Opens PDFs in the dedicated Firefox profile, full screen (kiosk mode).
-property firefoxBin : "$FF_AS"
-property profileDir : "$PROF_AS"
-
-on launchWith(argString)
-	do shell script quoted form of firefoxBin & " -profile " & quoted form of profileDir & " --kiosk" & argString & " > /dev/null 2>&1 &"
-end launchWith
-
-on open theFiles
-	set argString to ""
-	repeat with f in theFiles
-		set argString to argString & " " & quoted form of (POSIX path of f)
-	end repeat
-	launchWith(argString)
-end open
-
-on run
-	launchWith("")
-end run
-EOF
-osacompile -o "$APP_DIR" "$SCRIPT_FILE"
-rm -f "$SCRIPT_FILE"
-
-PLIST="$APP_DIR/Contents/Info.plist"
-PB=/usr/libexec/PlistBuddy
-$PB -c "Set :CFBundleIdentifier $BUNDLE_ID" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$PLIST"
-$PB -c "Set :CFBundleName Firefox PDF Reader" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleName string Firefox PDF Reader" "$PLIST"
-$PB -c "Delete :CFBundleDocumentTypes" "$PLIST" 2>/dev/null || true
-$PB -c "Add :CFBundleDocumentTypes array" "$PLIST"
-$PB -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
-$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string PDF Document" "$PLIST"
-$PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer" "$PLIST"
-$PB -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string Owner" "$PLIST"
-$PB -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
-$PB -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string com.adobe.pdf" "$PLIST"
-
-# Use Firefox's icon
-FF_ICON="$($PB -c "Print :CFBundleIconFile" "$FIREFOX_APP/Contents/Info.plist" 2>/dev/null || echo firefox)"
-FF_ICON="${FF_ICON%.icns}.icns"
-if [ -f "$FIREFOX_APP/Contents/Resources/$FF_ICON" ]; then
-  cp "$FIREFOX_APP/Contents/Resources/$FF_ICON" "$APP_DIR/Contents/Resources/applet.icns"
-fi
-
-# Editing Info.plist invalidates the applet's signature; re-sign it locally
-codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
-
-LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-"$LSREGISTER" -f "$APP_DIR"
-
-# --- 4. Default PDF app --------------------------------------------------------
-# Which app opens PDFs right now (bundle id)
-current_pdf_handler() {
-  osascript -l JavaScript -e "ObjC.import('CoreServices'); ObjC.castRefToObject(\$.LSCopyDefaultRoleHandlerForContentType(\$('com.adobe.pdf'), 0xFFFFFFFF)).js" 2>/dev/null
-}
-
-DEFAULT_SET=0
-if [ "$SET_DEFAULT" = 1 ]; then
-  step "Making it the default app for PDFs"
-  # 1. duti, if installed (brew install duti)
-  command -v duti >/dev/null 2>&1 && duti -s "$BUNDLE_ID" com.adobe.pdf all 2>/dev/null || true
-  # 2. Launch Services API through JavaScript for Automation (built into macOS)
-  if [ "$(current_pdf_handler)" != "$BUNDLE_ID" ]; then
-    osascript -l JavaScript -e "ObjC.import('CoreServices'); \$.LSSetDefaultRoleHandlerForContentType(\$('com.adobe.pdf'), 0xFFFFFFFF, \$('$BUNDLE_ID'))" >/dev/null 2>&1 || true
-  fi
-  # 3. The same API through Swift, if the command line tools are installed
-  if [ "$(current_pdf_handler)" != "$BUNDLE_ID" ] && command -v swift >/dev/null 2>&1; then
-    printf 'import CoreServices\n_ = LSSetDefaultRoleHandlerForContentType("com.adobe.pdf" as CFString, .all, "%s" as CFString)\n' "$BUNDLE_ID" \
-      | swift - >/dev/null 2>&1 || true
-  fi
-  [ "$(current_pdf_handler)" = "$BUNDLE_ID" ] && DEFAULT_SET=1
-  echo "    PDFs open with: $(current_pdf_handler)"
-fi
+step "Setting up the reader and making it the default app for PDFs"
+PROFILE="$(/bin/sh "$APP/Contents/Resources/setup.sh" "$APP/Contents/Resources/")"
+echo "    profile: $PROFILE"
+HANDLER="$(osascript -l JavaScript -e "ObjC.import('CoreServices'); ObjC.castRefToObject(\$.LSCopyDefaultRoleHandlerForContentType(\$('com.adobe.pdf'), 0xFFFFFFFF)).js" 2>/dev/null || true)"
+echo "    PDFs open with: $HANDLER"
 
 echo
 printf '\033[32mInstalled.\033[0m\n\n'
-if [ "$SET_DEFAULT" = 1 ] && [ "$DEFAULT_SET" = 0 ]; then
-  echo "Could not set the default PDF app automatically. To do it by hand:"
+if [ "$HANDLER" != "$BUNDLE_ID" ]; then
+  echo "If macOS asked, choose \"Use Firefox PDF Reader\". Otherwise set it by hand:"
   echo "  Finder > select any PDF > File > Get Info > Open with: Firefox PDF Reader > Change All..."
   echo
 fi

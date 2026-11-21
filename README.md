@@ -6,13 +6,16 @@
 
 ### **[⬇ Download Firefox PDF Reader](https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/#install)**
 
-The download page detects your system (Windows, macOS, Linux or ChromeOS) and gives you the matching one-step installer. The installer:
+The download page detects your system and gives you the matching download. Each one sets up the reader and makes it your default PDF app:
 
-- installs Firefox if it's missing (Windows and macOS)
-- sets up the reader
-- makes it your default PDF app
+| System | Download | How it installs |
+| --- | --- | --- |
+| Windows | [FirefoxPDFReader-Setup.cmd](https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader-Setup.cmd) | Double-click it. Installs Firefox too, if it's missing. |
+| macOS | [FirefoxPDFReader.dmg](https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader.dmg) | Drag **Firefox PDF Reader** into **Applications**, then open it once. |
+| Ubuntu, Debian, Mint, Pop!_OS | [FirefoxPDFReader.deb](https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader.deb) | Double-click it to install. Brings Firefox with it. |
+| ChromeOS | [FirefoxPDFReader.deb](https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader.deb) | Turn on Linux, then double-click it in **Files**. |
 
-Nothing needs administrator rights.
+The Mac app isn't signed by an Apple-registered developer yet, so the first time you open it, macOS asks you to allow it. Go to **System Settings → Privacy & Security** and click **Open Anyway**; you only do this once.
 
 <details>
 <summary>Or install from a terminal</summary>
@@ -23,7 +26,7 @@ Nothing needs administrator rights.
 powershell -c "irm https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/install/windows.ps1 | iex"
 ```
 
-**macOS, Linux, ChromeOS (Terminal):**
+**macOS, Linux (including Fedora, Arch and others), ChromeOS (Terminal):**
 
 ```sh
 curl -fsSL https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/install/install.sh | sh

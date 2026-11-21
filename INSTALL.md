@@ -72,9 +72,14 @@ bash ./macos/install.sh
 
 The script does the following:
 
-1. Creates the profile in `~/Library/Application Support/FirefoxPDF`.
-2. Builds **Firefox PDF Reader.app** in `~/Applications`, a small AppleScript app with Firefox's icon.
-3. Sets it as the default app for PDFs, using [`duti`](https://github.com/moretension/duti) if you have it, or macOS's own API if not.
+1. Builds **Firefox PDF Reader.app** in `~/Applications`, using [`macos/build-app.sh`](macos/build-app.sh). This is the same app as in the `.dmg`: a small AppleScript app with Firefox's icon that carries the reader's settings inside it.
+2. Runs the app's setup, which creates the profile in `~/Library/Application Support/FirefoxPDF` and sets the app as the default app for PDFs.
+
+The app refreshes the profile's settings every time it starts, so updating the app updates the reader.
+
+**Building the disk image:** `bash ./macos/build-dmg.sh dist` makes `dist/FirefoxPDFReader.dmg`.
+- **Default:** the app is signed ad hoc, so macOS asks people to allow it the first time (**System Settings → Privacy & Security → Open Anyway**).
+- **Signed and notarized:** with an Apple Developer ID, set `SIGN_IDENTITY`, `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID` and `NOTARY_PASSWORD`. The app is then signed and the disk image notarized, so it opens with no warning, like Chrome.
 
 On recent macOS, Finder then asks whether `.pdf` files should open with **Firefox PDF Reader** or keep using Preview. Click **Use "Firefox PDF Reader"**.
 
@@ -140,6 +145,21 @@ On Flatpak, PDFs from anywhere are passed in through the document portal.
 ```sh
 sh ./linux/uninstall.sh --remove-profile
 ```
+
+### The .deb package (Ubuntu, Debian, Mint, Pop!_OS, ChromeOS)
+
+`sh ./linux/package/build-deb.sh dist` builds `dist/firefox-pdf-reader_1.0_all.deb`. It installs:
+
+- `/usr/bin/firefox-pdf-reader`: the launcher. Each time it runs, it picks the right profile folder for native, Snap or Flatpak Firefox and refreshes the settings there.
+- the settings in `/usr/share/firefox-pdf-reader/`
+- the desktop entry `firefox-pdf-reader.desktop`
+
+**How it becomes the default:**
+- **For everyone:** installing makes it the system-wide PDF default in `/etc/xdg/mimeapps.list`.
+- **For each user:** the first time a user opens it, it makes itself their default too.
+- **Choices kept:** a user who already picked a default PDF app keeps it until they choose **Firefox PDF Reader** under **Open With**.
+
+It depends on `firefox-esr | firefox`, so installing it brings Firefox along if needed. Remove it with `sudo apt remove firefox-pdf-reader`.
 
 ## ChromeOS (Chromebooks)
 
