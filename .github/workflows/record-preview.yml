@@ -52,8 +52,10 @@ jobs:
         run: |
           mkdir -p out
           ffmpeg -y -loglevel error -i "$RUNNER_TEMP/rec.mp4" \
-            -vf "fps=12,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=32:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" \
+            -vf "fps=15,scale=640:400:flags=lanczos,split[a][b];[a]palettegen=max_colors=48:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" \
             -loop 0 out/preview.gif
+          # Exactly 640x400: the 1440x900 (16:10) screen, scaled with nothing cropped or padded
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 out/preview.gif
           # A few still frames, to check the recording
           for t in 0.5 4 8 12; do ffmpeg -y -loglevel error -ss $t -i "$RUNNER_TEMP/rec.mp4" -frames:v 1 "out/frame-$t.png"; done
           ls -la out
