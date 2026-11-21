@@ -56,7 +56,7 @@ if ($storePkg) {
 Write-Step "Writing Firefox profile files to $ProfileDir"
 New-Item -ItemType Directory -Force -Path (Join-Path $ProfileDir 'chrome') | Out-Null
 Copy-Item (Join-Path $RepoDir 'profile\user.js') $ProfileDir -Force
-Copy-Item (Join-Path $RepoDir 'profile\chrome\userContent.css') (Join-Path $ProfileDir 'chrome') -Force
+Copy-Item (Join-Path $RepoDir 'profile\chrome\*.css') (Join-Path $ProfileDir 'chrome') -Force
 
 # --- 3. Launcher ------------------------------------------------------------
 Write-Step 'Building FirefoxPDF.exe launcher'

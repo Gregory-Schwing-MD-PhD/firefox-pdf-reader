@@ -1,0 +1,7 @@
+/* Firefox window styling for the PDF reader profile only.
+   Hide browser notification bars (the strips that appear above the page),
+   so nothing but the PDF shows in the full-screen reader. */
+.notificationbox-stack,
+notification-message {
+  display: none !important;
+}

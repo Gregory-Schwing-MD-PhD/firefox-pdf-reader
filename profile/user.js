@@ -25,8 +25,12 @@ user_pref("mousewheel.default.delta_multiplier_y", 100);
 user_pref("pdfjs.enableHWA", true);
 user_pref("gfx.webrender.all", true);
 
-// ---- Load chrome/userContent.css (hides the PDF toolbar)
+// ---- Load chrome/userContent.css (hides the PDF toolbar) and
+//      chrome/userChrome.css (hides browser notification bars)
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+
+// ---- Keep browser toolbars hidden in full screen (macOS can otherwise show them)
+user_pref("browser.fullscreen.autohide", true);
 
 // ---- Quiet first run
 user_pref("browser.shell.checkDefaultBrowser", false);

@@ -47,7 +47,7 @@ echo "    $FIREFOX_APP"
 step "Writing Firefox profile files to $PROFILE_DIR"
 mkdir -p "$PROFILE_DIR/chrome"
 cp "$REPO_DIR/profile/user.js" "$PROFILE_DIR/"
-cp "$REPO_DIR/profile/chrome/userContent.css" "$PROFILE_DIR/chrome/"
+cp "$REPO_DIR/profile/chrome/userContent.css" "$REPO_DIR/profile/chrome/userChrome.css" "$PROFILE_DIR/chrome/"
 
 # --- 3. Launcher app -----------------------------------------------------------
 step "Building $APP_DIR"
