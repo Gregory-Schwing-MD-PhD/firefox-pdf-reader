@@ -39,7 +39,7 @@ jobs:
         id: default
         continue-on-error: true
         run: |
-          python3 tests/make_sample_pdf.py "$RUNNER_TEMP/sample.pdf"
+          cp docs/example.pdf "$RUNNER_TEMP/sample.pdf"
           HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
           echo "PDF handler: $HANDLER"
           [ "$HANDLER" = "$HOME/Applications/Firefox PDF Reader.app" ]
@@ -111,7 +111,7 @@ jobs:
 
       - name: Open the PDF through the desktop entry
         run: |
-          python3 tests/make_sample_pdf.py "$RUNNER_TEMP/sample.pdf"
+          cp docs/example.pdf "$RUNNER_TEMP/sample.pdf"
           gtk-launch firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" || "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/sample.pdf" &
           for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
           ps -eo args | grep -- "--kiosk" | grep -v grep
@@ -143,6 +143,13 @@ jobs:
           sleep 2
           ./linux/uninstall.sh --remove-profile
           test ! -e "$HOME/.local/bin/firefox-pdf-reader"
+
+      - name: One-step installer (docs/install/install.sh)
+        run: |
+          sh docs/install/install.sh
+          test -x "$HOME/.local/bin/firefox-pdf-reader"
+          [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
+          ./linux/uninstall.sh --remove-profile
 
   # ChromeOS's Linux environment (Crostini) is a Debian 12 container with a
   # regular user who has password-less sudo. GitHub can't run ChromeOS itself,
@@ -179,7 +186,7 @@ jobs:
 
       - name: Open the PDF
         run: |
-          $AS_USER python3 /home/penguin/firefox-pdf-reader/tests/make_sample_pdf.py /home/penguin/sample.pdf
+          cp docs/example.pdf /home/penguin/sample.pdf && chown penguin /home/penguin/sample.pdf
           $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/sample.pdf > /tmp/firefox.log 2>&1 &
           for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
           ps -eo user,args | grep -- "--kiosk" | grep -v grep
@@ -231,7 +238,7 @@ jobs:
       - name: Open the PDF with the launcher
         shell: pwsh
         run: |
-          python tests/make_sample_pdf.py "$env:RUNNER_TEMP\sample.pdf"
+          Copy-Item docs\example.pdf "$env:RUNNER_TEMP\sample.pdf"
           Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:RUNNER_TEMP\sample.pdf`""
           for ($i = 0; $i -lt 60; $i++) {
             $p = Get-CimInstance Win32_Process -Filter "Name='firefox.exe'" | Where-Object { $_.CommandLine -match '--kiosk' }
@@ -272,3 +279,11 @@ jobs:
           Start-Sleep 2
           powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile
           if (Test-Path 'HKCU:\Software\Classes\FirefoxPDFReader') { throw "registry entries left behind" }
+
+      - name: One-step installer (docs/install/windows.ps1)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\docs\install\windows.ps1
+          if (-not (Test-Path "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe")) { throw "launcher missing" }
+          if (-not (Test-Path 'HKCU:\Software\Classes\FirefoxPDFReader')) { throw "not registered" }
+          powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile

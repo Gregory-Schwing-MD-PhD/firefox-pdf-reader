@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firefox PDF Reader</title>
+<meta name="description" content="A dark, full-screen, distraction-free PDF reader built on Firefox. One-step install for Windows, macOS, Linux and ChromeOS.">
+<style>
+  :root {
+    --bg: #131215;
+    --panel: #1d1c21;
+    --line: #2e2d34;
+    --text: #e8e6ef;
+    --muted: #9b99a6;
+    --accent: #8f7bff;
+    --accent-2: #b3a6ff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 48px 16px 64px; }
+  h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.1; margin: 0 0 10px; letter-spacing: -.02em; }
+  h2 { font-size: 22px; margin: 56px 0 14px; }
+  p.lede { color: var(--muted); font-size: 18px; margin: 0 0 28px; max-width: 640px; }
+  a { color: var(--accent-2); }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+  .detected { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 10px;
+    background: var(--accent); color: #fff; font-weight: 650; font-size: 17px; text-decoration: none; border: 0; cursor: pointer; }
+  .btn:hover { background: #7d67ff; }
+  .btn:focus-visible, .tab:focus-visible, .copy:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .steps { color: var(--muted); margin: 14px 0 0; padding-left: 20px; }
+  .steps li { margin: 4px 0; }
+  .cmd { display: flex; align-items: stretch; margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .cmd code { flex: 1; padding: 12px 14px; font: 14px/1.5 var(--mono); background: #121115; color: var(--text);
+    overflow-x: auto; white-space: nowrap; }
+  .copy { border: 0; border-left: 1px solid var(--line); background: #26252b; color: var(--text); padding: 0 16px; cursor: pointer; font-weight: 600; }
+  .copy:hover { background: #302f36; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 20px 0 0; }
+  .tab { border: 1px solid var(--line); background: transparent; color: var(--muted); padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 14px; }
+  .tab[aria-selected="true"] { color: var(--text); border-color: var(--accent); }
+  .note { color: var(--muted); font-size: 14px; margin-top: 12px; }
+
+  .demo { position: relative; aspect-ratio: 16 / 10; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000; }
+  .demo iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  @media (max-width: 640px) { .demo { aspect-ratio: 3 / 4; } }
+
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; padding: 0; list-style: none; }
+  .features li { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .features b { display: block; margin-bottom: 2px; }
+  .features span { color: var(--muted); font-size: 14px; }
+  footer { color: var(--muted); font-size: 14px; margin-top: 56px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Firefox PDF Reader</h1>
+  <p class="lede">Dark, full-screen, distraction-free PDF reading. Double-click a PDF and you get the pages, scrolling smoothly, and nothing else.</p>
+
+  <section class="card" id="install" aria-labelledby="install-title">
+    <h2 id="install-title" style="margin-top:0">Install</h2>
+    <p class="detected" id="detected">Detecting your system…</p>
+    <div id="panel"></div>
+    <div class="tabs" role="tablist" aria-label="Other systems"></div>
+    <p class="note">Needs Firefox; the installer adds it on Windows (winget) and macOS (Homebrew) if it's missing. Nothing needs administrator rights. <a href="https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader#install">Manual install and uninstall</a>.</p>
+  </section>
+
+  <h2>Try it</h2>
+  <div class="demo">
+    <iframe src="demo.html" title="Firefox PDF Reader demo with an example PDF" allow="fullscreen" allowfullscreen loading="lazy"></iframe>
+  </div>
+  <p class="note">A browser version of the reader showing an example paper. Scroll it, press <kbd>F</kbd> or double-click for full screen, or <a href="demo.html">open it on its own page</a>. It remembers where you were.</p>
+
+  <h2>Features</h2>
+  <ul class="features">
+    <li><b>Dark</b><span>Dark viewer, and pages recoloured to light grey on near-black.</span></li>
+    <li><b>Full screen</b><span>Opens straight into full screen, with no tabs, address bar or menus.</span></li>
+    <li><b>Nothing but the PDF</b><span>No toolbar, sidebar or notice bars.</span></li>
+    <li><b>Continuous</b><span>One long vertical scroll through every page, fit to the page width.</span></li>
+    <li><b>Remembers your spot</b><span>Reopen a PDF where you left off, at the same zoom.</span></li>
+    <li><b>Smooth scrolling</b><span>Firefox's smooth scrolling, tuned to work with your mouse's.</span></li>
+    <li><b>Low latency</b><span>Pages drawn on the graphics card (WebRender), and no add-ons or start page in the way.</span></li>
+    <li><b>Separate from your browser</b><span>Its own Firefox profile; your normal Firefox is untouched.</span></li>
+    <li><b>Default PDF app</b><span>Double-click any PDF to open it here.</span></li>
+    <li><b>Every desktop</b><span>Windows, macOS, Linux and ChromeOS, tested on each.</span></li>
+  </ul>
+
+  <footer>
+    <a href="https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader">Source on GitHub</a> ·
+    MIT License ·
+    <a href="https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/issues/new/choose">Contact</a> (via GitHub, no email address needed) ·
+    Not affiliated with Mozilla. Firefox is a trademark of the Mozilla Foundation.
+  </footer>
+</main>
+
+<script>
+(() => {
+  const BASE = 'https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/install/';
+  const SH = `curl -fsSL ${BASE}install.sh | sh`;
+  const PS = `powershell -c "irm ${BASE}windows.ps1 | iex"`;
+
+  const systems = {
+    windows: {
+      name: 'Windows',
+      html: `<a class="btn" href="install/FirefoxPDFReader-Setup.cmd" download>Download for Windows</a>
+        <ol class="steps">
+          <li>Open the downloaded <b>FirefoxPDFReader-Setup.cmd</b>. If Windows warns about it, choose <b>More info → Run anyway</b>.</li>
+          <li>When Settings opens, type <b>.pdf</b>, click the current app and choose <b>Firefox PDF Reader (full screen)</b>.</li>
+        </ol>
+        <p class="note">Or paste this into PowerShell:</p>${cmd(PS)}`
+    },
+    macos: {
+      name: 'macOS',
+      html: `${cmd(SH)}
+        <ol class="steps">
+          <li>Click <b>Copy</b>, open <b>Terminal</b> (Spotlight: ⌘ Space, type “Terminal”), paste and press Return.</li>
+          <li>When Finder asks, choose <b>Use “Firefox PDF Reader”</b>.</li>
+        </ol>`
+    },
+    linux: {
+      name: 'Linux',
+      html: `${cmd(SH)}
+        <ol class="steps">
+          <li>Click <b>Copy</b>, open a terminal, paste and press Enter.</li>
+          <li>It becomes your default PDF app. Works with Firefox from your distribution, Snap or Flatpak.</li>
+        </ol>`
+    },
+    chromeos: {
+      name: 'ChromeOS',
+      html: `${cmd(SH)}
+        <ol class="steps">
+          <li>Turn on Linux: <b>Settings → About ChromeOS → Developers → Linux development environment</b>.</li>
+          <li>Click <b>Copy</b>, open the <b>Terminal</b> app, paste and press Enter. Firefox is installed for you.</li>
+          <li>In <b>Files</b>, right-click a PDF → <b>Open with → Change default</b> → <b>Firefox PDF Reader</b>.</li>
+        </ol>`
+    }
+  };
+
+  function cmd(text) {
+    const id = 'c' + Math.random().toString(36).slice(2, 8);
+    return `<div class="cmd"><code id="${id}">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</code>` +
+           `<button class="copy" type="button" data-copy="${id}">Copy</button></div>`;
+  }
+
+  function detect() {
+    const ua = navigator.userAgent;
+    const plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+    if (/CrOS/.test(ua) || /Chrome OS/i.test(plat)) return 'chromeos';
+    if (/Win/i.test(plat) || /Windows/.test(ua)) return 'windows';
+    if (/Mac/i.test(plat) || /Macintosh/.test(ua)) return 'macos';
+    if (/Linux|X11/i.test(plat + ua)) return 'linux';
+    return 'windows';
+  }
+
+  const panel = document.getElementById('panel');
+  const detected = document.getElementById('detected');
+  const tabs = document.querySelector('.tabs');
+  const mobile = /Android|iPhone|iPad/.test(navigator.userAgent);
+  const found = detect();
+
+  function show(key, auto) {
+    panel.innerHTML = systems[key].html;
+    detected.textContent = auto
+      ? (mobile ? 'Firefox PDF Reader is for computers. Here is the ' + systems[key].name + ' version:' : 'Detected ' + systems[key].name + '.')
+      : 'Showing ' + systems[key].name + '.';
+    tabs.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.os === key)));
+  }
+
+  Object.entries(systems).forEach(([key, s]) => {
+    const b = document.createElement('button');
+    b.className = 'tab'; b.type = 'button'; b.role = 'tab'; b.dataset.os = key; b.textContent = s.name;
+    b.addEventListener('click', () => show(key, false));
+    tabs.append(b);
+  });
+
+  panel.addEventListener('click', async e => {
+    const id = e.target.dataset && e.target.dataset.copy;
+    if (!id) return;
+    const text = document.getElementById(id).textContent;
+    try { await navigator.clipboard.writeText(text); e.target.textContent = 'Copied'; }
+    catch (_) { getSelection().selectAllChildren(document.getElementById(id)); e.target.textContent = 'Press Ctrl+C'; }
+    setTimeout(() => { e.target.textContent = 'Copy'; }, 1800);
+  });
+
+  show(found, true);
+})();
+</script>
+</body>
+</html>

@@ -135,4 +135,7 @@ Write-Host "     > Scroll wheel > turn Smooth scrolling on."
 Write-Host ''
 Write-Host 'Keys: Alt+F4 closes the reader, Ctrl+Tab switches PDFs, Ctrl+W closes one.'
 
-if (-not $SkipDefaultAppsPage) { Start-Process "ms-settings:defaultapps?registeredAppUser=$ProgId" }
+if (-not $SkipDefaultAppsPage) {
+    try { Start-Process "ms-settings:defaultapps?registeredAppUser=$ProgId" -ErrorAction Stop }
+    catch { Write-Host "Open Settings > Apps > Default apps to choose the default PDF app." }
+}

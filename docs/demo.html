@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reader demo · Firefox PDF Reader</title>
+<meta name="description" content="Try Firefox PDF Reader in your browser: dark, full screen, continuous scrolling, nothing but the PDF.">
+<style>
+  :root {
+    --bg: #131215;
+    --page-bg: #1a1a1a;
+    --page-fg: #dcdcdc;
+    --muted: #8b8a91;
+    --accent: #8f7bff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--page-fg);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #viewer { position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; outline: none;
+    scrollbar-color: #3a3940 transparent; }
+  #pages { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0 0 4px; }
+  .page { position: relative; background: var(--page-bg); width: 100%; }
+  .page canvas { display: block; width: 100%; height: 100%; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+  /* Controls that exist only for the demo; the real reader has none */
+  #hint { position: fixed; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center;
+    padding: 6px 6px 6px 12px; border-radius: 999px; background: rgba(30, 29, 34, .88);
+    color: var(--muted); font-size: 13px; transition: opacity .4s; backdrop-filter: blur(6px); }
+  #hint.idle { opacity: 0; }
+  #hint:hover { opacity: 1; }
+  #hint button { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-weight: 600; }
+  #hint button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  :fullscreen #hint { display: none; }
+  @media (max-width: 480px) { #hint span { display: none; } }
+</style>
+</head>
+<body>
+<div id="viewer" tabindex="0" aria-label="PDF document"><div id="pages"></div></div>
+<div id="status">Loading PDF…</div>
+<div id="hint"><span>Demo · press F or double-click for full screen</span><button id="fs" type="button">Full screen</button></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(async () => {
+  const pdfjsLib = window['pdfjs-dist/build/pdf'];
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const params = new URLSearchParams(location.search);
+  const url = params.get('file') && /^[\w.\-\/]+\.pdf$/.test(params.get('file')) ? params.get('file') : 'example.pdf';
+  const viewer = document.getElementById('viewer');
+  const pagesEl = document.getElementById('pages');
+  const status = document.getElementById('status');
+  const MARGIN = 20;                         // side margin, like the reader at page width
+  const COLORS = { background: '#1a1a1a', foreground: '#dcdcdc' };   // same as user.js
+  const storeKey = 'fpr-demo-pos:' + url;
+
+  let pdf;
+  try {
+    pdf = await pdfjsLib.getDocument(url).promise;
+  } catch (e) {
+    status.textContent = 'Could not load the PDF.';
+    return;
+  }
+  status.remove();
+
+  const pages = [];
+  for (let n = 1; n <= pdf.numPages; n++) {
+    const page = await pdf.getPage(n);
+    const vp = page.getViewport({ scale: 1 });
+    const div = document.createElement('div');
+    div.className = 'page';
+    div.dataset.n = n;
+    div.setAttribute('aria-label', `Page ${n} of ${pdf.numPages}`);
+    pagesEl.append(div);
+    pages.push({ page, div, ratio: vp.height / vp.width, width: vp.width, rendered: 0, task: null });
+  }
+
+  // Page width: every page fills the viewer's width minus a small margin
+  function layout() {
+    const w = Math.max(200, viewer.clientWidth - 2 * MARGIN);
+    for (const p of pages) {
+      p.div.style.width = w + 'px';
+      p.div.style.height = Math.round(w * p.ratio) + 'px';
+    }
+    return w;
+  }
+
+  async function render(p) {
+    const cssWidth = p.div.clientWidth;
+    const scale = cssWidth / p.width * Math.min(window.devicePixelRatio || 1, 2);
+    if (p.rendered === scale) return;
+    if (p.task) p.task.cancel();
+    const vp = p.page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(vp.width);
+    canvas.height = Math.floor(vp.height);
+    p.task = p.page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, pageColors: COLORS });
+    try {
+      await p.task.promise;
+      p.div.replaceChildren(canvas);
+      p.rendered = scale;
+    } catch (_) { /* cancelled */ }
+    p.task = null;
+  }
+
+  // Render pages as they come near the screen
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) render(pages[e.target.dataset.n - 1]);
+  }, { root: viewer, rootMargin: '150% 0px' });
+
+  layout();
+  pages.forEach(p => io.observe(p.div));
+
+  // Remember the reading position, like the reader does for each PDF
+  try {
+    const saved = JSON.parse(localStorage.getItem(storeKey) || 'null');
+    if (saved) viewer.scrollTop = saved.frac * viewer.scrollHeight;
+  } catch (_) {}
+  let saveTimer;
+  viewer.addEventListener('scroll', () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(storeKey, JSON.stringify({ frac: viewer.scrollTop / viewer.scrollHeight })); } catch (_) {}
+    }, 300);
+  }, { passive: true });
+
+  // Keep the same spot when the window or full screen changes size
+  let resizeTimer;
+  new ResizeObserver(() => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const frac = viewer.scrollTop / viewer.scrollHeight;
+      layout();
+      viewer.scrollTop = frac * viewer.scrollHeight;
+      for (const p of pages) {
+        const r = p.div.getBoundingClientRect();
+        if (r.bottom > -innerHeight && r.top < 2 * innerHeight) render(p);
+      }
+    }, 120);
+  }).observe(viewer);
+
+  // Full screen (the real reader always starts this way)
+  const toggleFs = () => document.fullscreenElement
+    ? document.exitFullscreen()
+    : document.documentElement.requestFullscreen?.().catch(() => {});
+  document.getElementById('fs').addEventListener('click', toggleFs);
+  viewer.addEventListener('dblclick', toggleFs);
+  addEventListener('keydown', e => {
+    if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFs();
+  });
+
+  // Fade the demo hint when the reader is idle
+  const hint = document.getElementById('hint');
+  let idleTimer;
+  const wake = () => { hint.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => hint.classList.add('idle'), 2500); };
+  addEventListener('mousemove', wake, { passive: true });
+  wake();
+  viewer.focus();
+})();
+</script>
+</body>
+</html>
