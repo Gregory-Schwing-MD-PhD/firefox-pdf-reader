@@ -10,7 +10,7 @@
   Afterwards, pick a new default PDF app in Settings > Apps > Default apps.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -RemoveProfile
+  powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile
 #>
 [CmdletBinding()]
 param(

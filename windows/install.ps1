@@ -15,7 +15,7 @@
   Nothing needs administrator rights.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\install.ps1
+  powershell -ExecutionPolicy Bypass -File .\windows\install.ps1
 #>
 [CmdletBinding()]
 param(
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoDir  = $PSScriptRoot
+$RepoDir  = Split-Path $PSScriptRoot -Parent   # repo root (this script is in windows\)
 $AppName  = 'Firefox PDF Reader (full screen)'
 $ProgId   = 'FirefoxPDFReader'
 
@@ -74,7 +74,7 @@ try {
 } catch {
     Write-Warning "Could not extract Firefox's icon; the launcher will use a generic one."
 }
-& $csc @cscArgs (Join-Path $RepoDir 'launcher\FirefoxPDF.cs')
+& $csc @cscArgs (Join-Path $PSScriptRoot 'launcher\FirefoxPDF.cs')
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { throw 'Building the launcher failed.' }
 Write-Host "    $exe"
 
