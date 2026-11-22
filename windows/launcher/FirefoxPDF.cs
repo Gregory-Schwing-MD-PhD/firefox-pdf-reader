@@ -54,10 +54,14 @@ static class FirefoxPDF
     }
 
     // What Firefox is asked to open for one PDF: the reader's viewer with the
-    // PDF's address after "?file=", encoded once more. A web address, or any
+    // PDF's address after "?file=", encoded once more. A PDF on this computer
+    // may come as its path or as its file:/// address. A web address, or any
     // PDF when the viewer is missing, goes to Firefox as it is.
     static string Target(string arg, string viewer)
     {
+        Uri uri;
+        if (arg.Contains("://") && Uri.TryCreate(arg, UriKind.Absolute, out uri) && uri.IsFile)
+            arg = uri.LocalPath;
         if (arg.Contains("://") || !File.Exists(viewer)) return arg;
         return FileUrl(viewer) + "?file=" + Uri.EscapeDataString(FileUrl(arg));
     }

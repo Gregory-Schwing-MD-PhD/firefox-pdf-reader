@@ -141,10 +141,13 @@ EOF
     cat <<EOF
 VIEWER="$PROFILE_DIR/viewer/web/viewer.html"
 # -new-window: every PDF gets a window of its own, also when the reader is
-# already running, so Alt+Tab shows each PDF by its file name.
+# already running, so Alt+Tab shows each PDF by its file name. A PDF on this
+# computer, given by its path or its file:// address, opens in the reader's
+# viewer; a web address goes to Firefox as it is.
 n=\$#
 for f in "\$@"; do
   case "\$f" in
+    file://*) [ -f "\$VIEWER" ] && f="\$(viewer_url "\$VIEWER" "\$f")" ;;
     *://*) ;;
     *) [ -f "\$VIEWER" ] && f="\$(viewer_url "\$VIEWER" "\$f")" ;;
   esac
