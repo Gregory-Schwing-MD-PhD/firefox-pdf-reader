@@ -1,18 +1,22 @@
 <#
 .SYNOPSIS
-  Sets up "Firefox PDF Reader (full screen)": PDFs open in Firefox full screen,
-  dark, at page width, scrolling vertically, with no toolbars or panels.
+  Sets up "Firefox PDF Reader": every PDF opens in its own Firefox window,
+  filling the screen, at page width, scrolling vertically, with no toolbars or
+  panels, and with its pictures in their own colours. F11 makes it full screen
+  and back.
 
 .DESCRIPTION
   1. Creates a dedicated Firefox profile (default: %USERPROFILE%\FirefoxPDF)
-     with the PDF viewer preferences and a style sheet that hides the toolbar.
-  2. Compiles a tiny launcher, FirefoxPDF.exe, that opens a PDF in that
-     profile in kiosk (full-screen) mode.
+     with the PDF viewer preferences and the style sheets that hide the
+     browser's bars and the PDF toolbar.
+  2. Compiles a tiny launcher, FirefoxPDF.exe, that opens each PDF in its own
+     window of that profile.
   3. Registers the launcher with Windows as a PDF app (current user only).
-  4. Opens Settings > Default apps so you can make it the default for .pdf.
-     Windows requires that last click to be yours.
+  4. Opens Settings > Default apps so you can make it the default for .pdf,
+     unless it already is. Windows requires that last click to be yours.
 
-  Nothing needs administrator rights.
+  Nothing needs administrator rights, and nothing asks a question. Running it
+  again updates an installed reader to this version.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\windows\install.ps1
@@ -25,7 +29,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $RepoDir  = Split-Path $PSScriptRoot -Parent   # repo root (this script is in windows\)
-$AppName  = 'Firefox PDF Reader (full screen)'
+$AppName  = 'Firefox PDF Reader'
 $ProgId   = 'FirefoxPDFReader'
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -113,7 +117,7 @@ New-ItemProperty "$classes\.pdf\OpenWithProgids" -Name $ProgId -Value ([byte[]]@
 $cap = "HKCU:\Software\$ProgId\Capabilities"
 New-Item "$cap\FileAssociations" -Force | Out-Null
 Set-ItemProperty $cap -Name ApplicationName -Value $AppName
-Set-ItemProperty $cap -Name ApplicationDescription -Value 'Opens PDFs in Firefox full screen, dark, with no toolbars'
+Set-ItemProperty $cap -Name ApplicationDescription -Value 'Opens each PDF in its own Firefox window, with no toolbars'
 Set-ItemProperty "$cap\FileAssociations" -Name '.pdf' -Value $ProgId
 New-Item 'HKCU:\Software\RegisteredApplications' -Force -ErrorAction SilentlyContinue | Out-Null
 Set-ItemProperty 'HKCU:\Software\RegisteredApplications' -Name $ProgId -Value "Software\$ProgId\Capabilities"
@@ -124,18 +128,35 @@ Add-Type -Namespace FirefoxPDFSetup -Name Shell -MemberDefinition `
 [FirefoxPDFSetup.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 
 # --- 5. Default app + mouse --------------------------------------------------
+# Already the default PDF app (for example when this runs again to update)?
+# Windows keeps the choice in UserChoiceLatest\ProgId (newer Windows 11) or UserChoice.
+$fileExts = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pdf'
+$choices = foreach ($key in "$fileExts\UserChoiceLatest\ProgId", "$fileExts\UserChoice") {
+    try { (Get-ItemProperty $key -ErrorAction Stop).ProgId } catch { }
+}
+$isDefault = @($choices | Where-Object { $_ }) -contains $ProgId -and
+             -not (@($choices | Where-Object { $_ -and $_ -ne $ProgId }))
+
 Write-Host ''
 Write-Host 'Installed.' -ForegroundColor Green
 Write-Host ''
-Write-Host 'Two steps Windows and Logitech require you to do yourself:' -ForegroundColor Yellow
-Write-Host "  1. Default PDF app: in the Settings page that opens, type .pdf in 'Set a default"
-Write-Host "     for a file type', click the current app, pick '$AppName', click Set default."
-Write-Host "  2. Smooth mouse wheel (Logitech): Logi Options+ > your mouse > Point and Scroll"
-Write-Host "     > Scroll wheel > turn Smooth scrolling on."
+if ($isDefault) {
+    Write-Host 'It is already your default PDF app.'
+} else {
+    Write-Host 'One step Windows requires you to do yourself:' -ForegroundColor Yellow
+    Write-Host "  Default PDF app: in the Settings page that opens, type .pdf in 'Set a default"
+    Write-Host "  for a file type', click the current app, pick '$AppName', click Set default."
+}
+Write-Host 'Smooth mouse wheel (Logitech): Logi Options+ > your mouse > Point and Scroll'
+Write-Host '  > Scroll wheel > turn Smooth scrolling on.'
 Write-Host ''
-Write-Host 'Keys: Alt+F4 closes the reader, Ctrl+Tab switches PDFs, Ctrl+W closes one.'
+Write-Host 'Each PDF opens in its own window. Keys: F11 full screen and back,'
+Write-Host '  Alt+Tab switches between PDFs, Ctrl+W closes a PDF, Alt+F4 closes its window.'
+if (Get-Process firefox -ErrorAction SilentlyContinue) {
+    Write-Host 'If the reader is open now, close its windows: the next PDF you open uses this version.'
+}
 
-if (-not $SkipDefaultAppsPage) {
+if (-not $SkipDefaultAppsPage -and -not $isDefault) {
     try { Start-Process "ms-settings:defaultapps?registeredAppUser=$ProgId" -ErrorAction Stop }
     catch { Write-Host "Open Settings > Apps > Default apps to choose the default PDF app." }
 }

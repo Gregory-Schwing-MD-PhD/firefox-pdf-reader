@@ -1,15 +1,36 @@
 // Preferences for the dedicated "Firefox PDF Reader" profile.
 // Firefox applies this file on every start of the profile.
 
-// ---- PDF view: page width, vertical scrolling, no sidebar, dark UI, dark pages
+// ---- PDF view: page width, vertical scrolling, no sidebar, dark viewer
 user_pref("pdfjs.defaultZoomValue", "page-width");
 user_pref("pdfjs.scrollModeOnLoad", 0);      // 0 = vertical scrolling
 user_pref("pdfjs.spreadModeOnLoad", 0);      // 0 = no spreads
 user_pref("pdfjs.sidebarViewOnLoad", 0);     // 0 = sidebar closed
-user_pref("pdfjs.viewerCssTheme", 2);        // 2 = dark viewer theme
-user_pref("pdfjs.forcePageColors", true);    // recolour pages
-user_pref("pdfjs.pageColorsBackground", "#1a1a1a");
-user_pref("pdfjs.pageColorsForeground", "#dcdcdc");
+user_pref("pdfjs.viewerCssTheme", 2);        // 2 = dark viewer around the pages
+
+// ---- Pages and pictures in their own colours
+// pdf.js must not recolour pages. These are Firefox's own defaults, written
+// out so that an older install of the reader (which recoloured every page,
+// pictures included, to grey on near-black) gets them back: Firefox keeps a
+// changed setting until something sets it again.
+user_pref("pdfjs.forcePageColors", false);
+user_pref("pdfjs.pageColorsBackground", "Canvas");
+user_pref("pdfjs.pageColorsForeground", "CanvasText");
+
+// ---- Every PDF in its own ordinary window
+// The system's own title bar, showing the PDF's name, with its minimise,
+// maximise and close buttons (Firefox's tab strip and address bar are hidden
+// by chrome/userChrome.css).
+user_pref("browser.tabs.inTitlebar", 0);
+// A web link clicked in a PDF opens in a new window; the PDF stays where it was.
+user_pref("pdfjs.externalLinkTarget", 2);    // 2 = open in a new browsing context
+user_pref("browser.link.open_newwindow", 2); // 2 = a new window, not a tab
+user_pref("browser.link.open_newwindow.disabled_in_fullscreen", false);  // also in full screen (macOS)
+// Full screen hides Firefox's bar and slides it down when the mouse touches
+// the top edge (macOS would otherwise keep it showing).
+user_pref("browser.fullscreen.autohide", true);
+// Cmd+Q (Ctrl+Q on Linux) closes the reader straight away, like any app.
+user_pref("browser.warnOnQuitShortcut", false);
 
 // ---- Smooth scrolling
 // The mouse's own smooth scrolling (Logi Options+) does the gliding, so
@@ -25,11 +46,9 @@ user_pref("mousewheel.default.delta_multiplier_y", 100);
 user_pref("pdfjs.enableHWA", true);
 user_pref("gfx.webrender.all", true);
 
-// ---- Load chrome/userContent.css (hides the PDF toolbar)
+// ---- Load chrome/userChrome.css (hides the browser's bars) and
+// chrome/userContent.css (hides the PDF toolbar, shows the short hint)
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
-
-// ---- Keep browser toolbars hidden in full screen (macOS can otherwise show them)
-user_pref("browser.fullscreen.autohide", true);
 
 // ---- Quiet first run
 user_pref("browser.shell.checkDefaultBrowser", false);
@@ -42,6 +61,9 @@ user_pref("browser.startup.upgradeDialog.enabled", false);
 user_pref("browser.shell.setDefaultPDFHandler", false);       // never take over .pdf from the reader
 user_pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", false);
 user_pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", false);
+// No first-run messages from this profile (on Windows one of them asks the
+// system to pin Firefox to the taskbar, which pops up over the first PDF)
+user_pref("browser.newtabpage.activity-stream.asrouter.providers.onboarding", "{\"id\":\"onboarding\",\"type\":\"local\",\"localProvider\":\"OnboardingMessageProvider\",\"enabled\":false,\"exclude\":[]}");
 
 // No usage-data uploads from this profile (also stops the data-reporting notice bar)
 user_pref("datareporting.policy.dataSubmissionEnabled", false);

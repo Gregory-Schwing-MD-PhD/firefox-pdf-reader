@@ -1,11 +1,12 @@
 #!/bin/bash
-# Firefox PDF Reader (full screen) for macOS, installed from a copy of this
+# Firefox PDF Reader for macOS, installed from a copy of this
 # repository. (Most people should use FirefoxPDFReader.dmg instead: open it
 # and drag the app into Applications.)
 #
 # Builds "Firefox PDF Reader.app" into ~/Applications and runs its setup:
 # the reader's Firefox profile in ~/Library/Application Support/FirefoxPDF,
-# and the app as the default for PDFs.
+# and the app as the default for PDFs. Running it again updates an installed
+# reader.
 #
 # Usage:  bash ./macos/install.sh
 set -euo pipefail
@@ -46,4 +47,5 @@ fi
 echo "Smooth mouse wheel (Logitech): Logi Options+ > your mouse > Point and Scroll"
 echo "  > Scroll wheel > turn Smooth scrolling on."
 echo
-echo "Keys: Cmd+Q closes the reader, Ctrl+Tab switches PDFs, Cmd+W closes one."
+echo "Each PDF opens in its own window. Keys: Ctrl+Cmd+F full screen, Esc leaves it,"
+echo "  Cmd+\` switches between PDFs, Cmd+W closes one, Cmd+Q closes the reader."

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Removes Firefox PDF Reader (full screen) from Linux (and ChromeOS's Linux).
+# Removes Firefox PDF Reader from Linux (and ChromeOS's Linux).
 # The profile folder (per-PDF reading positions) is kept unless --remove-profile is given.
 #
 # Usage:  ./linux/uninstall.sh [--remove-profile]

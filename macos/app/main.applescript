@@ -1,7 +1,7 @@
 -- Firefox PDF Reader.app
 -- Double-click the app: sets itself up (profile, default PDF app).
--- Open a PDF with it: shows the PDF in Firefox, full screen (kiosk mode),
--- using the reader's own Firefox profile.
+-- Open a PDF with it: shows the PDF in its own window of Firefox, filling the
+-- screen, using the reader's own Firefox profile (Ctrl+Cmd+F: full screen).
 
 on findFirefox()
 	set home to POSIX path of (path to home folder)
@@ -36,7 +36,7 @@ on run
 		return
 	end if
 	setUp()
-	set msg to "Firefox PDF Reader is ready." & return & return & "Double-click any PDF to read it full screen, in dark mode, with nothing but the pages." & return & return & "Cmd+Q closes the reader. Ctrl+Tab switches between open PDFs."
+	set msg to "Firefox PDF Reader is ready." & return & return & "Double-click any PDF to read it with nothing but the pages. Each PDF opens in its own window." & return & return & "Ctrl+Cmd+F: full screen, Esc leaves it. Cmd+` switches between open PDFs, Cmd+W closes one, Cmd+Q closes the reader."
 	display dialog msg buttons {"OK"} default button "OK" with title "Firefox PDF Reader" giving up after 120
 end run
 
@@ -47,9 +47,11 @@ on open theFiles
 		return
 	end if
 	set profileDir to setUp()
+	-- -new-window: every PDF gets a window of its own, also when the reader is
+	-- already running (Firefox hands the request to the running reader).
 	set args to ""
 	repeat with f in theFiles
-		set args to args & " " & quoted form of (POSIX path of f)
+		set args to args & " -new-window " & quoted form of (POSIX path of f)
 	end repeat
-	do shell script quoted form of ff & " -profile " & quoted form of profileDir & " --kiosk" & args & " > /dev/null 2>&1 &"
+	do shell script quoted form of ff & " -profile " & quoted form of profileDir & args & " > /dev/null 2>&1 &"
 end open

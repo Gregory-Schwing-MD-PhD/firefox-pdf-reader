@@ -1,0 +1,19 @@
+/* Firefox PDF Reader: windows that show nothing but the PDF.
+ *
+ * Firefox's tab strip, address bar, bookmarks bar and sidebar are hidden. The
+ * system's own title bar stays (browser.tabs.inTitlebar = 0 in user.js) and
+ * shows the PDF's file name, so each PDF is an ordinary window: move it,
+ * minimise it, switch to it with Alt+Tab and close it like any other app.
+ *
+ * In full screen Firefox itself keeps its bar out of sight and slides it down
+ * when the mouse touches the top edge of the screen; the buttons at its right
+ * end leave full screen or close the window. */
+:root:not([inFullscreen]) #navigator-toolbox {
+  visibility: collapse !important;
+}
+
+#sidebar-main,
+#sidebar-box,
+#sidebar-splitter {
+  display: none !important;
+}

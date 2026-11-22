@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Removes "Firefox PDF Reader (full screen)" from Windows.
+  Removes "Firefox PDF Reader" from Windows.
 
 .DESCRIPTION
   Removes the registry entries install.ps1 added and the FirefoxPDF.exe

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Firefox PDF Reader (full screen) for ChromeOS / Chromebooks.
+# Firefox PDF Reader for ChromeOS / Chromebooks.
 #
 # ChromeOS can't run Firefox directly, so this runs inside ChromeOS's Linux
 # environment ("Linux development environment", also called Crostini):

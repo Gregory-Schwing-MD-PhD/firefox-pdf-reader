@@ -22,7 +22,7 @@ osacompile -o "$APP" "$REPO_DIR/macos/app/main.applescript"
 RES="$APP/Contents/Resources"
 mkdir -p "$RES/profile/chrome"
 cp "$REPO_DIR/profile/user.js" "$RES/profile/"
-cp "$REPO_DIR/profile/chrome/userContent.css" "$RES/profile/chrome/"
+cp "$REPO_DIR/profile/chrome/"*.css "$RES/profile/chrome/"
 cp "$REPO_DIR/macos/app/setup.sh" "$RES/"
 
 # App identity and "opens PDFs"

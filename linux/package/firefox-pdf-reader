@@ -1,8 +1,9 @@
 #!/bin/sh
 # Firefox PDF Reader launcher (installed by the .deb package as
-# /usr/bin/firefox-pdf-reader). Opens PDFs in the reader's own Firefox
-# profile, full screen (kiosk mode). The first time it runs for a user it
-# also makes itself that user's default PDF app.
+# /usr/bin/firefox-pdf-reader). Opens each PDF in its own window of the
+# reader's own Firefox profile, filling the screen (F11 makes it full screen
+# and back). The first time it runs for a user it also makes itself that
+# user's default PDF app.
 set -eu
 
 SHARE=/usr/share/firefox-pdf-reader
@@ -39,7 +40,13 @@ fi
 # Reader settings (refreshed every run, so package updates apply)
 mkdir -p "$PROFILE/chrome"
 cp "$SHARE/profile/user.js" "$PROFILE/"
-cp "$SHARE/profile/chrome/userContent.css" "$PROFILE/chrome/"
+cp "$SHARE/profile/chrome/"*.css "$PROFILE/chrome/"
+
+# A window that fills the screen: Firefox restores its window's size mode from
+# xulstore.json, and "maximized" is the closest it supports to starting full
+# screen. Firefox writes the file itself as windows change, so it is written
+# before every start; it counts when the reader isn't already running.
+printf '%s' '{"chrome://browser/content/browser.xhtml":{"main-window":{"width":"1280","height":"900","sizemode":"maximized"}}}' > "$PROFILE/xulstore.json" 2>/dev/null || true
 
 # First run for this user: make the reader their default PDF app
 if [ ! -e "$PROFILE/.default-set" ] && command -v xdg-mime >/dev/null 2>&1; then
@@ -47,11 +54,20 @@ if [ ! -e "$PROFILE/.default-set" ] && command -v xdg-mime >/dev/null 2>&1; then
   : > "$PROFILE/.default-set"
 fi
 
+# -new-window: every PDF gets a window of its own, also when the reader is
+# already running, so Alt+Tab shows each PDF by its file name.
 if [ "$KIND" = flatpak ]; then
   # --file-forwarding passes PDFs from anywhere through the document portal
-  exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE" --kiosk @@ "$@" @@
+  # (each file between its own pair of @@)
+  n=$#
+  for f in "$@"; do set -- "$@" -new-window @@ "$f" @@; done
+  shift $n
+  exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE" "$@"
 fi
 
 FF="$1"; shift
+n=$#
+for f in "$@"; do set -- "$@" -new-window "$f"; done
+shift $n
 export MOZ_USE_XINPUT2=1   # smooth touchpad and high-resolution wheel scrolling on X11
-exec "$FF" -profile "$PROFILE" --kiosk "$@"
+exec "$FF" -profile "$PROFILE" "$@"

@@ -1,4 +1,6 @@
-/* Hide Firefox's PDF viewer toolbar and sidebar so only pages show */
+/* Hide Firefox's PDF viewer toolbar and sidebar so only pages show.
+   Nothing here touches the pages themselves: they and their pictures keep
+   their own colours. */
 #toolbarContainer,
 .toolbar,
 #sidebarContainer,
@@ -11,4 +13,37 @@
 #viewerContainer {
   inset: 0 !important;
   top: 0 !important;
+}
+
+/* A short note at the bottom of the screen for the first seconds of full
+   screen (F11, or Ctrl+Cmd+F on a Mac), saying how to leave it. It shows
+   each time a window goes full screen. #outerContainer exists only in the
+   PDF viewer, so web pages never show it. */
+@media (display-mode: fullscreen) {
+  #outerContainer::after {
+    content: "F11 leaves full screen \00B7  Ctrl+W closes this PDF \00B7  Alt+Tab switches PDFs";
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    z-index: 100000;
+    pointer-events: none;
+    padding: 8px 18px;
+    border-radius: 999px;
+    background: rgba(24, 24, 28, 0.92);
+    color: #f0eff4;
+    font: 15px/1.4 system-ui, sans-serif;
+    white-space: nowrap;
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+    animation: firefox-pdf-reader-hint 8s ease-in forwards;
+  }
+}
+@media (display-mode: fullscreen) and (-moz-platform: macos) {
+  #outerContainer::after {
+    content: "Esc leaves full screen \00B7  Cmd+W closes this PDF";
+  }
+}
+@keyframes firefox-pdf-reader-hint {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0; visibility: hidden; }
 }

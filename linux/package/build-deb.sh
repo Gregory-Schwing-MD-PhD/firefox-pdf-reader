@@ -15,7 +15,9 @@ trap 'rm -rf "$ROOT"' EXIT
 
 install -Dm755 "$REPO_DIR/linux/package/firefox-pdf-reader" "$ROOT/usr/bin/firefox-pdf-reader"
 install -Dm644 "$REPO_DIR/profile/user.js" "$ROOT/usr/share/$PKG/profile/user.js"
-install -Dm644 "$REPO_DIR/profile/chrome/userContent.css" "$ROOT/usr/share/$PKG/profile/chrome/userContent.css"
+for css in "$REPO_DIR/profile/chrome/"*.css; do
+  install -Dm644 "$css" "$ROOT/usr/share/$PKG/profile/chrome/$(basename "$css")"
+done
 install -Dm644 "$REPO_DIR/LICENSE" "$ROOT/usr/share/doc/$PKG/copyright"
 
 install -d "$ROOT/usr/share/applications"
@@ -24,7 +26,7 @@ cat > "$ROOT/usr/share/applications/$PKG.desktop" <<'EOF'
 Type=Application
 Name=Firefox PDF Reader
 GenericName=PDF Reader
-Comment=Read PDFs full screen and dark, with nothing but the pages
+Comment=Read PDFs, each in its own window, with nothing but the pages
 Exec=firefox-pdf-reader %F
 Icon=firefox
 Terminal=false
@@ -43,11 +45,13 @@ Depends: firefox-esr | firefox, xdg-utils
 Section: text
 Priority: optional
 Homepage: https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/
-Description: Dark, full-screen, distraction-free PDF reader built on Firefox
- Opens PDFs in Firefox's PDF viewer in its own profile: full screen (kiosk
- mode), dark pages, fit to page width, continuous vertical scrolling, no
- toolbar or sidebar, and it remembers where you left off. Becomes the default
- PDF app for every user who hasn't chosen one.
+Description: Distraction-free PDF reader built on Firefox
+ Opens each PDF in its own window of Firefox's PDF viewer, in the reader's own
+ profile: a window filling the screen (F11 for full screen), a dark viewer
+ around pages and pictures in their own colours, fit to page width,
+ continuous vertical scrolling, no toolbar or sidebar, and it remembers where
+ you left off. Becomes the default PDF app for every user who hasn't chosen
+ one.
 EOF
 
 # Make it the system-wide default for PDFs (users who picked their own

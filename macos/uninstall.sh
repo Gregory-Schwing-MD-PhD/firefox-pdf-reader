@@ -1,5 +1,5 @@
 #!/bin/bash
-# Removes Firefox PDF Reader (full screen) from macOS.
+# Removes Firefox PDF Reader from macOS.
 # The profile folder (per-PDF reading positions) is kept unless --remove-profile is given.
 #
 # Usage:  ./macos/uninstall.sh [--profile-dir DIR] [--remove-profile]

@@ -1,16 +1,18 @@
 #!/bin/sh
-# Firefox PDF Reader (full screen) for Linux: Ubuntu, Debian, Fedora, Arch,
+# Firefox PDF Reader for Linux: Ubuntu, Debian, Fedora, Arch,
 # openSUSE, Linux Mint, Pop!_OS and other desktops that follow the
 # freedesktop.org standards. Also used by chromeos/install.sh.
 #
-# 1. Creates a dedicated Firefox profile with the PDF viewer settings and a
-#    style sheet that hides the toolbar.
+# 1. Creates a dedicated Firefox profile with the PDF viewer settings and the
+#    style sheets that hide the browser's bars and the PDF toolbar.
 # 2. Installs a launcher (~/.local/bin/firefox-pdf-reader) and a desktop
-#    entry that opens PDFs in that profile in kiosk (full-screen) mode.
+#    entry that open each PDF in its own window of that profile, filling the
+#    screen (F11 makes it full screen and back).
 # 3. Makes it the default app for PDFs (xdg-mime).
 #
 # Works with Firefox installed as a regular package, a Snap (Ubuntu's default)
-# or a Flatpak.
+# or a Flatpak. Running it again updates an installed reader; nothing asks a
+# question.
 #
 # Usage:  ./linux/install.sh [--profile-dir DIR] [--no-default]
 set -eu
@@ -72,26 +74,48 @@ echo "    $FIREFOX_CMD ($KIND)"
 step "Writing Firefox profile files to $PROFILE_DIR"
 mkdir -p "$PROFILE_DIR/chrome"
 cp "$REPO_DIR/profile/user.js" "$PROFILE_DIR/"
-cp "$REPO_DIR/profile/chrome/userContent.css" "$PROFILE_DIR/chrome/"
+cp "$REPO_DIR/profile/chrome/"*.css "$PROFILE_DIR/chrome/"
 
 # --- 3. Launcher and desktop entry -----------------------------------------------
 step "Installing launcher $LAUNCHER"
 mkdir -p "$BIN_DIR" "$APPS_DIR"
 
+# Every launcher first makes the reader's window fill the screen. Firefox
+# restores its window's size mode from xulstore.json, and "maximized" is the
+# closest it supports to starting full screen (its kiosk mode has no way out).
+# Firefox writes that file itself as windows change, so the launcher writes it
+# before every start; it counts when the reader isn't already running.
+START_WINDOW='{"chrome://browser/content/browser.xhtml":{"main-window":{"width":"1280","height":"900","sizemode":"maximized"}}}'
+
 if [ "$KIND" = flatpak ]; then
   # --file-forwarding passes PDFs from anywhere through the document portal
+  # (each file between its own pair of @@)
   cat > "$LAUNCHER" <<EOF
 #!/bin/sh
-# Opens PDFs in the dedicated Firefox profile, full screen (kiosk mode).
-exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE_DIR" --kiosk @@ "\$@" @@
+# Opens each PDF in its own window of the dedicated Firefox profile, filling
+# the screen (F11 makes it full screen and back).
+printf '%s' '$START_WINDOW' > "$PROFILE_DIR/xulstore.json" 2>/dev/null || true
+# -new-window: every PDF gets a window of its own, also when the reader is
+# already running, so Alt+Tab shows each PDF by its file name.
+n=\$#
+for f in "\$@"; do set -- "\$@" -new-window @@ "\$f" @@; done
+shift \$n
+exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE_DIR" "\$@"
 EOF
 else
   cat > "$LAUNCHER" <<EOF
 #!/bin/sh
-# Opens PDFs in the dedicated Firefox profile, full screen (kiosk mode).
+# Opens each PDF in its own window of the dedicated Firefox profile, filling
+# the screen (F11 makes it full screen and back).
 # MOZ_USE_XINPUT2 gives smooth touchpad and high-resolution wheel scrolling on X11.
 export MOZ_USE_XINPUT2=1
-exec "$FIREFOX_CMD" -profile "$PROFILE_DIR" --kiosk "\$@"
+printf '%s' '$START_WINDOW' > "$PROFILE_DIR/xulstore.json" 2>/dev/null || true
+# -new-window: every PDF gets a window of its own, also when the reader is
+# already running, so Alt+Tab shows each PDF by its file name.
+n=\$#
+for f in "\$@"; do set -- "\$@" -new-window "\$f"; done
+shift \$n
+exec "$FIREFOX_CMD" -profile "$PROFILE_DIR" "\$@"
 EOF
 fi
 chmod +x "$LAUNCHER"
@@ -108,7 +132,7 @@ cat > "$APPS_DIR/$DESKTOP_ID" <<EOF
 Type=Application
 Name=Firefox PDF Reader
 GenericName=PDF Reader
-Comment=Read PDFs in Firefox full screen, dark, with no toolbars
+Comment=Read PDFs in Firefox, each in its own window, with no toolbars
 Exec="$LAUNCHER" %F
 Icon=$ICON
 Terminal=false
@@ -135,4 +159,7 @@ case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Note: $BIN_DIR is not on your PATH
 echo "Smooth mouse wheel: touchpads already scroll smoothly. For a Logitech mouse, Solaar"
 echo "  (sudo apt install solaar) can turn on high-resolution scrolling if the mouse supports it."
 echo
-echo "Keys: Alt+F4 closes the reader, Ctrl+Tab switches PDFs, Ctrl+W closes one."
+echo "Each PDF opens in its own window. Keys: F11 full screen and back, Alt+Tab"
+echo "  switches between PDFs (on GNOME, Alt+\` between the reader's windows),"
+echo "  Ctrl+W closes a PDF, Alt+F4 closes its window."
+echo "If the reader is open now, close its windows: the next PDF you open uses this version."
