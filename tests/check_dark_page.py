@@ -51,7 +51,8 @@ INK_RATIO = (0.5, 2.0)     #     letters' pixels, reader's / poppler's
 MAX_MEAN_DIFF = 4.0        # (c) per channel, |reader - poppler| of the means, 0-255
 MAX_MEAN_ABS_DIFF = 12.0   #     per channel, mean of |reader - poppler| per pixel
 MIN_CORRELATION = 0.95     #     brightness, reader against poppler (an inverted picture gives about -1)
-MAX_LABEL_DIFF = 35.0      #     a label on the picture: mean |reader - poppler| brightness over its box
+LABEL_RATIO = (0.4, 2.5)   #     a label on the picture: its letters' pixels (white ones for the white
+                           #     label, black ones for the black), reader's / poppler's, over its box
 MAX_BAR_DIFF = 8.0         # (d) per channel, a bar's mean colour against the PDF's colour
 AXIS_WHITE = 200.0         #     the axes, where poppler draws them black: at least this bright
 AXIS_BESIDE = 60.0         #     and the page beside them at most this
@@ -174,11 +175,19 @@ def main():
         misses.append(f"c: the picture differs from poppler's ({result['c_picture']})")
     result["c_picture"]["labels_on_picture"] = []
     for x, top, size, grey, text in CHART["picture_labels"]:
-        lb = box(x - 1, top - 1, size * 0.8, size + 2)
-        d = float(np.abs(lum(reader(lb)) - lum(poppler(lb))).mean())
-        result["c_picture"]["labels_on_picture"].append({"label": text, "grey": grey, "mean_abs_difference": round(d, 1)})
-        if d > MAX_LABEL_DIFF:
-            misses.append(f"c: the {'white' if grey else 'black'} label '{text}' on the picture changed colour ({d:.0f})")
+        lb = box(x - 2, top - 2, size * 0.9, size + 4)
+        lr, lp = lum(reader(lb)), lum(poppler(lb))
+        # The letters in the label's own colour: very light pixels for the
+        # white label (the picture around it is darker), very dark ones for
+        # the black label (the picture around it is lighter)
+        own_r, own_p = ((lr >= 230).sum(), (lp >= 230).sum()) if grey >= 0.5 else ((lr <= 40).sum(), (lp <= 40).sum())
+        ratio = float(own_r / max(own_p, 1))
+        result["c_picture"]["labels_on_picture"].append(
+            {"label": text, "grey": grey, "letter_pixels_reader": int(own_r), "letter_pixels_poppler": int(own_p),
+             "ratio": round(ratio, 2)})
+        if not LABEL_RATIO[0] <= ratio <= LABEL_RATIO[1]:
+            misses.append(f"c: the {'white' if grey else 'black'} label '{text}' on the picture changed colour "
+                          f"({own_r} letter pixels in its colour, poppler {own_p})")
     steps = [w[0] for w in wedge]
     if not (all(s1 < s2 for s1, s2 in zip(steps, steps[1:])) and steps[0] < 25 and steps[-1] > 230):
         misses.append(f"c: the step wedge does not run from black to white, left to right: {steps}")
