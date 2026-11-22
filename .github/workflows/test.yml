@@ -183,6 +183,16 @@ jobs:
           sleep 8   # page drawn
           shot "$SHOTS/6-chart-page.png"
           python tests/check_dark_page.py "$SHOTS/6-chart-page.png" "$PDFS/chart.pdf" "$SHOTS" --name dark-page-${{ matrix.os }}
+          # Find: Cmd+F opens the viewer's find bar at the top right
+          press 3 command
+          sleep 1
+          osascript -e 'tell application "System Events" to keystroke "picture"'
+          press 36
+          sleep 2
+          shot "$SHOTS/6b-find.png"
+          python tests/find_bar_shown.py "$SHOTS/6-chart-page.png" "$SHOTS/6b-find.png" "$SHOTS/dark-page-${{ matrix.os }}.json"
+          press 53
+          sleep 1
           press 13 command
           wait_windows 2
 
@@ -451,6 +461,16 @@ jobs:
           sleep 8   # page drawn
           shot "$SHOTS/7-chart-page.png"
           python tests/check_dark_page.py "$SHOTS/7-chart-page.png" "$PDFS/chart.pdf" "$SHOTS" --name dark-page-ubuntu
+          # Find: Ctrl+F opens the viewer's find bar at the top right
+          xdotool key ctrl+f
+          sleep 1
+          xdotool type --delay 60 picture
+          xdotool key Return
+          sleep 2
+          shot "$SHOTS/8-find.png"
+          python tests/find_bar_shown.py "$SHOTS/7-chart-page.png" "$SHOTS/8-find.png" "$SHOTS/dark-page-ubuntu.json"
+          xdotool key Escape
+          sleep 1
           xdotool key ctrl+w
           wait_windows 2
 
@@ -839,6 +859,16 @@ jobs:
           Save-Screen "$env:SHOTS\7-chart-page.png"
           python tests/check_dark_page.py "$env:SHOTS\7-chart-page.png" "$env:PDFS\chart.pdf" "$env:SHOTS" --name dark-page-windows
           if ($LASTEXITCODE) { throw 'the black page, white text and colours check missed' }
+          # Find: Ctrl+F opens the viewer's find bar at the top right
+          [System.Windows.Forms.SendKeys]::SendWait('^f')
+          Start-Sleep 1
+          [System.Windows.Forms.SendKeys]::SendWait('picture{ENTER}')
+          Start-Sleep 2
+          Save-Screen "$env:SHOTS\8-find.png"
+          python tests/find_bar_shown.py "$env:SHOTS\7-chart-page.png" "$env:SHOTS\8-find.png" "$env:SHOTS\dark-page-windows.json"
+          if ($LASTEXITCODE) { throw 'the find bar did not open' }
+          Send-Keys Esc
+          Start-Sleep 1
           Send-Keys Ctrl, W
           Wait-ReaderWindows 2 | Out-Null
 
