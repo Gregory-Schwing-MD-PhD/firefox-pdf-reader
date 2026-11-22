@@ -56,25 +56,73 @@ function readerColor(graphics, color) {
   const v = Math.round(255 * MathClamp((255 - (max + min) / 2) / (255 - READER_DARK), 0, 1));
   return Util.makeHexColor(v, v, v);
 }
-// Text, lines and fills drawn on top of a picture (labels and arrows on an
-// X-ray, dark text on a light photograph) keep their own colours, as the
-// picture under them does. readerPicture() notes where each picture is drawn
-// on the page; readerKeepColours() gives a shape or line of text whose box
-// lies inside one its own colours, and returns the colours to put back after.
-function readerPicture(graphics) {
-  if (graphics.pageColors) {
-    const box = BBOX_INIT.slice();
-    Util.axialAlignedBoundingBox([0, 0, 1, 1], getCurrentTransform(graphics.ctx), box);
-    (graphics.readerPictures ||= []).push({ ctx: graphics.ctx, box });
+// Text, lines and stencils (one-colour bitmaps, such as the letters of many
+// scanned pages) drawn on top of a picture keep their own colours, as the
+// picture under them does: labels and arrows on an X-ray, dark text on a
+// light photograph, the letters of a scan stored as a picture of the paper
+// with the letters on top. readerArea() notes, in drawing order, where each
+// picture is drawn on the page; readerKeeps() says whether a box (a shape's,
+// a stencil's, or the point where a line of text starts) lies on one.
+const READER_CELL = 128; // the areas are listed by the squares of this many pixels they touch
+function readerUnitBox(m) {
+  const box = BBOX_INIT.slice();
+  Util.axialAlignedBoundingBox([0, 0, 1, 1], m, box);
+  return box;
+}
+function readerCells(ctx, box) {
+  const n = Math.ceil(Math.max(ctx.canvas.width, ctx.canvas.height, 1) / READER_CELL);
+  const cell = v => MathClamp(Math.floor(v / READER_CELL), 0, n);
+  return [cell(box[0]), cell(box[1]), cell(box[2]), cell(box[3]), n + 1];
+}
+function readerArea(graphics, box, keep) {
+  if (!graphics.pageColors || graphics.smaskStack.length > 0 || !box || !(box[0] <= box[2] && box[1] <= box[3])) {
+    return;
+  }
+  const { ctx } = graphics;
+  const area = { box: Array.from(box), keep };
+  graphics.readerAreas ||= new Map();
+  let cells = graphics.readerAreas.get(ctx);
+  if (!cells) {
+    graphics.readerAreas.set(ctx, (cells = new Map()));
+  }
+  const [x0, y0, x1, y1, n] = readerCells(ctx, box);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const key = y * n + x;
+      const list = cells.get(key);
+      if (list) {
+        list.push(area);
+      } else {
+        cells.set(key, [area]);
+      }
+    }
   }
 }
-function readerKeepColours(graphics, box) {
-  const { ctx, current } = graphics;
-  const onPicture = graphics.readerPictures?.some(p => p.ctx === ctx &&
-    box[0] >= p.box[0] - 1 && box[1] >= p.box[1] - 1 && box[2] <= p.box[2] + 1 && box[3] <= p.box[3] + 1);
-  if (!onPicture || graphics.smaskStack.length > 0) {
-    return null;
+function readerPicture(graphics) {
+  readerArea(graphics, readerUnitBox(getCurrentTransform(graphics.ctx)), true);
+}
+function readerKeeps(graphics, box) {
+  const { ctx } = graphics;
+  const cells = graphics.readerAreas?.get(ctx);
+  if (!cells || graphics.smaskStack.length > 0) {
+    return false;
   }
+  const x = (box[0] + box[2]) / 2,
+    y = (box[1] + box[3]) / 2;
+  const [cx, cy, , , n] = readerCells(ctx, [x, y, x, y]);
+  const list = cells.get(cy * n + cx) || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const a = list[i];
+    if (box[0] < a.box[0] - 1 || box[1] < a.box[1] - 1 || box[2] > a.box[2] + 1 || box[3] > a.box[3] + 1) {
+      continue;
+    }
+    return a.keep;
+  }
+  return false;
+}
+// The PDF's own colours on the canvas; returns the colours to put back after.
+function readerOwnColours(graphics) {
+  const { ctx, current } = graphics;
   const saved = [ctx, ctx.fillStyle, ctx.strokeStyle];
   const own = color => current.transferMapsFallback?.applyToColor(color) ?? color;
   if (!current.patternFill && typeof current.fillColor === "string") {
@@ -84,6 +132,22 @@ function readerKeepColours(graphics, box) {
     ctx.strokeStyle = own(current.strokeColor);
   }
   return saved;
+}
+function readerKeepColours(graphics, box) {
+  return readerKeeps(graphics, box) ? readerOwnColours(graphics) : null;
+}
+function readerPutBack(saved) {
+  if (saved) {
+    [saved[0].fillStyle, saved[0].strokeStyle] = saved.slice(1);
+  }
+}
+// The colour a stencil drawn through the matrix m (from its unit square) is filled with.
+function readerStencilColour(graphics, m, color) {
+  const { current } = graphics;
+  if (typeof current.fillColor !== "string" || !readerKeeps(graphics, readerUnitBox(Util.transform(getCurrentTransform(graphics.ctx), m)))) {
+    return color;
+  }
+  return current.transferMapsFallback?.applyToColor(current.fillColor) ?? current.fillColor;
 }
 '''
 
@@ -125,12 +189,16 @@ PATCHES = [
      "        this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);\n      }\n    }\n"
      "    this[op](opIdx, path);\n    this._pathStartIdx = opIdx;\n",
      "        this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);\n      }\n    }\n"
-     "    const readerSaved = readerKeepColours(this, this.current.minMax); // Firefox PDF Reader\n"
+     "    // Firefox PDF Reader: readerKeepColours(). A Type3 letter drawn with a stencil comes here as an\n"
+     "    // outline (rawFillPath) in its unit square, whose minMax pdf.js gives in the stencil's pixels.\n"
+     "    const readerSaved = readerKeepColours(this, op === OPS.rawFillPath ? readerUnitBox(getCurrentTransform(this.ctx)) : this.current.minMax);\n"
      "    this[op](opIdx, path);\n"
-     "    if (readerSaved) {\n      [readerSaved[0].fillStyle, readerSaved[0].strokeStyle] = readerSaved.slice(1);\n    }\n"
+     "    readerPutBack(readerSaved);\n"
      "    this._pathStartIdx = opIdx;\n"),
     # A line of text on a picture: the point a third of the font size above
     # where it starts. (showText's own ctx.restore() puts the colours back.)
+    # Text in a Type3 font is drawn by shapes and stencils, which decide for
+    # themselves.
     ("build/pdf.mjs",
      "    ctx.translate(current.x, current.y + current.textRise);\n    if (fontDirection > 0) {\n      ctx.scale(textHScale, -1);\n",
      "    ctx.translate(current.x, current.y + current.textRise);\n"
@@ -139,6 +207,54 @@ PATCHES = [
      "      Util.applyTransform(p, getCurrentTransform(ctx));\n"
      "      readerKeepColours(this, [p[0], p[1], p[0], p[1]]);\n    }\n"
      "    if (fontDirection > 0) {\n      ctx.scale(textHScale, -1);\n"),
+    # Pictures drawn many times over, or as a group of small ones: each is noted.
+    ("build/pdf.mjs",
+     "      ctx.transform(...entry.transform);\n      ctx.scale(1, -1);\n      drawImageAtIntegerCoords(ctx, imgToPaint,",
+     "      ctx.transform(...entry.transform);\n      readerPicture(this); // Firefox PDF Reader\n"
+     "      ctx.scale(1, -1);\n      drawImageAtIntegerCoords(ctx, imgToPaint,"),
+    # A stencil (image mask) on a picture is filled with its own colour.
+    ("build/pdf.mjs",
+     "    const mask = this._createMaskCanvas(opIdx, img);\n    const maskCanvas = mask.canvas;\n",
+     "    const readerSaved = readerKeepColours(this, readerUnitBox(getCurrentTransform(ctx))); // Firefox PDF Reader\n"
+     "    const mask = this._createMaskCanvas(opIdx, img);\n    readerPutBack(readerSaved);\n"
+     "    const maskCanvas = mask.canvas;\n"),
+    # The same stencil drawn many times: in its own colour where it lies on a
+    # picture, in the page's colours elsewhere.
+    ("build/pdf.mjs",
+     "    ctx.transform(scaleX, skewX, skewY, scaleY, 0, 0);\n    const mask = this._createMaskCanvas(opIdx, img);\n",
+     "    ctx.transform(scaleX, skewX, skewY, scaleY, 0, 0);\n"
+     "    // Firefox PDF Reader: readerKeeps()\n"
+     "    const readerKeep = [];\n"
+     "    for (let i = 0; i < positions.length; i += 2) {\n"
+     "      readerKeep.push(readerKeeps(this, readerUnitBox(Util.transform(currentTransform, [scaleX, skewX, skewY, scaleY, positions[i], positions[i + 1]]))));\n"
+     "    }\n"
+     "    let readerMask = null;\n"
+     "    if (readerKeep.includes(true)) {\n"
+     "      const saved = readerOwnColours(this);\n"
+     "      readerMask = this._createMaskCanvas(opIdx, img);\n"
+     "      readerPutBack(saved);\n"
+     "    }\n"
+     "    const mask = this._createMaskCanvas(opIdx, img);\n"),
+    ("build/pdf.mjs",
+     "      ctx.drawImage(mask.canvas, trans[4], trans[5]);\n",
+     "      ctx.drawImage(readerKeep[i / 2] ? readerMask.canvas : mask.canvas, trans[4], trans[5]); // Firefox PDF Reader\n"),
+    ("build/pdf.mjs",
+     "    ctx.restore();\n    if (mask.canvasEntry) {\n      this.canvasFactory.destroy(mask.canvasEntry);\n    }\n"
+     "    this.compose();\n    this.dependencyTracker?.recordOperation(opIdx);\n",
+     "    ctx.restore();\n    if (mask.canvasEntry) {\n      this.canvasFactory.destroy(mask.canvasEntry);\n    }\n"
+     "    if (readerMask?.canvasEntry) { // Firefox PDF Reader\n      this.canvasFactory.destroy(readerMask.canvasEntry);\n    }\n"
+     "    this.compose();\n    this.dependencyTracker?.recordOperation(opIdx);\n"),
+    # A group of small stencils: each decides for itself.
+    ("build/pdf.mjs",
+     "      maskCtx.fillStyle = isPatternFill ? fillColor.getPattern(maskCtx, this, getCurrentTransformInverse(ctx), PathType.FILL, opIdx) : fillColor;\n",
+     "      maskCtx.fillStyle = isPatternFill ? fillColor.getPattern(maskCtx, this, getCurrentTransformInverse(ctx), PathType.FILL, opIdx)\n"
+     "        : readerStencilColour(this, transform, fillColor); // Firefox PDF Reader\n"),
+    # A stencil of one pixel fills its whole box.
+    ("build/pdf.mjs",
+     "    this.ctx.fillRect(0, 0, 1, 1);\n",
+     "    const readerSaved = readerKeepColours(this, readerUnitBox(getCurrentTransform(this.ctx))); // Firefox PDF Reader\n"
+     "    this.ctx.fillRect(0, 0, 1, 1);\n"
+     "    readerPutBack(readerSaved);\n"),
     # The reader's settings (reader.mjs), read just before the viewer starts.
     ("web/viewer.html",
      '  <script src="viewer.mjs" type="module"></script>\n',
@@ -161,8 +277,8 @@ Firefox PDF Reader changed it with tools/make_viewer.py in its repository
 (https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader):
 - left out: the source maps (*.map) and the sample PDF;
 - build/pdf.mjs: {sum(1 for p in PATCHES if p[0] == "build/pdf.mjs")} changes, each marked "Firefox PDF Reader": pages are drawn
-  black with white text, pictures in their own colours, and text and lines
-  drawn on a picture in their own colours;
+  black with white text, pictures in their own colours, and text, lines and
+  stencils drawn on a picture in their own colours;
 - web/viewer.html: reads the reader's settings, web/reader.mjs, before the
   viewer starts;
 - added: web/reader.mjs (the reader's settings, MIT License), NOTICE and

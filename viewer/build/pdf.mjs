@@ -9909,25 +9909,73 @@ function readerColor(graphics, color) {
   const v = Math.round(255 * MathClamp((255 - (max + min) / 2) / (255 - READER_DARK), 0, 1));
   return Util.makeHexColor(v, v, v);
 }
-// Text, lines and fills drawn on top of a picture (labels and arrows on an
-// X-ray, dark text on a light photograph) keep their own colours, as the
-// picture under them does. readerPicture() notes where each picture is drawn
-// on the page; readerKeepColours() gives a shape or line of text whose box
-// lies inside one its own colours, and returns the colours to put back after.
-function readerPicture(graphics) {
-  if (graphics.pageColors) {
-    const box = BBOX_INIT.slice();
-    Util.axialAlignedBoundingBox([0, 0, 1, 1], getCurrentTransform(graphics.ctx), box);
-    (graphics.readerPictures ||= []).push({ ctx: graphics.ctx, box });
+// Text, lines and stencils (one-colour bitmaps, such as the letters of many
+// scanned pages) drawn on top of a picture keep their own colours, as the
+// picture under them does: labels and arrows on an X-ray, dark text on a
+// light photograph, the letters of a scan stored as a picture of the paper
+// with the letters on top. readerArea() notes, in drawing order, where each
+// picture is drawn on the page; readerKeeps() says whether a box (a shape's,
+// a stencil's, or the point where a line of text starts) lies on one.
+const READER_CELL = 128; // the areas are listed by the squares of this many pixels they touch
+function readerUnitBox(m) {
+  const box = BBOX_INIT.slice();
+  Util.axialAlignedBoundingBox([0, 0, 1, 1], m, box);
+  return box;
+}
+function readerCells(ctx, box) {
+  const n = Math.ceil(Math.max(ctx.canvas.width, ctx.canvas.height, 1) / READER_CELL);
+  const cell = v => MathClamp(Math.floor(v / READER_CELL), 0, n);
+  return [cell(box[0]), cell(box[1]), cell(box[2]), cell(box[3]), n + 1];
+}
+function readerArea(graphics, box, keep) {
+  if (!graphics.pageColors || graphics.smaskStack.length > 0 || !box || !(box[0] <= box[2] && box[1] <= box[3])) {
+    return;
+  }
+  const { ctx } = graphics;
+  const area = { box: Array.from(box), keep };
+  graphics.readerAreas ||= new Map();
+  let cells = graphics.readerAreas.get(ctx);
+  if (!cells) {
+    graphics.readerAreas.set(ctx, (cells = new Map()));
+  }
+  const [x0, y0, x1, y1, n] = readerCells(ctx, box);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const key = y * n + x;
+      const list = cells.get(key);
+      if (list) {
+        list.push(area);
+      } else {
+        cells.set(key, [area]);
+      }
+    }
   }
 }
-function readerKeepColours(graphics, box) {
-  const { ctx, current } = graphics;
-  const onPicture = graphics.readerPictures?.some(p => p.ctx === ctx &&
-    box[0] >= p.box[0] - 1 && box[1] >= p.box[1] - 1 && box[2] <= p.box[2] + 1 && box[3] <= p.box[3] + 1);
-  if (!onPicture || graphics.smaskStack.length > 0) {
-    return null;
+function readerPicture(graphics) {
+  readerArea(graphics, readerUnitBox(getCurrentTransform(graphics.ctx)), true);
+}
+function readerKeeps(graphics, box) {
+  const { ctx } = graphics;
+  const cells = graphics.readerAreas?.get(ctx);
+  if (!cells || graphics.smaskStack.length > 0) {
+    return false;
   }
+  const x = (box[0] + box[2]) / 2,
+    y = (box[1] + box[3]) / 2;
+  const [cx, cy, , , n] = readerCells(ctx, [x, y, x, y]);
+  const list = cells.get(cy * n + cx) || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const a = list[i];
+    if (box[0] < a.box[0] - 1 || box[1] < a.box[1] - 1 || box[2] > a.box[2] + 1 || box[3] > a.box[3] + 1) {
+      continue;
+    }
+    return a.keep;
+  }
+  return false;
+}
+// The PDF's own colours on the canvas; returns the colours to put back after.
+function readerOwnColours(graphics) {
+  const { ctx, current } = graphics;
   const saved = [ctx, ctx.fillStyle, ctx.strokeStyle];
   const own = color => current.transferMapsFallback?.applyToColor(color) ?? color;
   if (!current.patternFill && typeof current.fillColor === "string") {
@@ -9937,6 +9985,22 @@ function readerKeepColours(graphics, box) {
     ctx.strokeStyle = own(current.strokeColor);
   }
   return saved;
+}
+function readerKeepColours(graphics, box) {
+  return readerKeeps(graphics, box) ? readerOwnColours(graphics) : null;
+}
+function readerPutBack(saved) {
+  if (saved) {
+    [saved[0].fillStyle, saved[0].strokeStyle] = saved.slice(1);
+  }
+}
+// The colour a stencil drawn through the matrix m (from its unit square) is filled with.
+function readerStencilColour(graphics, m, color) {
+  const { current } = graphics;
+  if (typeof current.fillColor !== "string" || !readerKeeps(graphics, readerUnitBox(Util.transform(getCurrentTransform(graphics.ctx), m)))) {
+    return color;
+  }
+  return current.transferMapsFallback?.applyToColor(current.fillColor) ?? current.fillColor;
 }
 class CanvasGraphics {
   static #SCALE_MATRIX = null;
@@ -10948,11 +11012,11 @@ class CanvasGraphics {
         this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);
       }
     }
-    const readerSaved = readerKeepColours(this, this.current.minMax); // Firefox PDF Reader
+    // Firefox PDF Reader: readerKeepColours(). A Type3 letter drawn with a stencil comes here as an
+    // outline (rawFillPath) in its unit square, whose minMax pdf.js gives in the stencil's pixels.
+    const readerSaved = readerKeepColours(this, op === OPS.rawFillPath ? readerUnitBox(getCurrentTransform(this.ctx)) : this.current.minMax);
     this[op](opIdx, path);
-    if (readerSaved) {
-      [readerSaved[0].fillStyle, readerSaved[0].strokeStyle] = readerSaved.slice(1);
-    }
+    readerPutBack(readerSaved);
     this._pathStartIdx = opIdx;
   }
   closePath(opIdx) {
@@ -12019,7 +12083,9 @@ class CanvasGraphics {
     img.count = count;
     const started = this.#beginKnockoutElement(this.current.fillAlpha);
     const ctx = this.ctx;
+    const readerSaved = readerKeepColours(this, readerUnitBox(getCurrentTransform(ctx))); // Firefox PDF Reader
     const mask = this._createMaskCanvas(opIdx, img);
+    readerPutBack(readerSaved);
     const maskCanvas = mask.canvas;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -12042,17 +12108,31 @@ class CanvasGraphics {
     ctx.save();
     const currentTransform = getCurrentTransform(ctx);
     ctx.transform(scaleX, skewX, skewY, scaleY, 0, 0);
+    // Firefox PDF Reader: readerKeeps()
+    const readerKeep = [];
+    for (let i = 0; i < positions.length; i += 2) {
+      readerKeep.push(readerKeeps(this, readerUnitBox(Util.transform(currentTransform, [scaleX, skewX, skewY, scaleY, positions[i], positions[i + 1]]))));
+    }
+    let readerMask = null;
+    if (readerKeep.includes(true)) {
+      const saved = readerOwnColours(this);
+      readerMask = this._createMaskCanvas(opIdx, img);
+      readerPutBack(saved);
+    }
     const mask = this._createMaskCanvas(opIdx, img);
     ctx.setTransform(1, 0, 0, 1, mask.offsetX - currentTransform[4], mask.offsetY - currentTransform[5]);
     this.dependencyTracker?.resetBBox(opIdx);
     for (let i = 0, ii = positions.length; i < ii; i += 2) {
       const trans = Util.transform(currentTransform, [scaleX, skewX, skewY, scaleY, positions[i], positions[i + 1]]);
-      ctx.drawImage(mask.canvas, trans[4], trans[5]);
+      ctx.drawImage(readerKeep[i / 2] ? readerMask.canvas : mask.canvas, trans[4], trans[5]); // Firefox PDF Reader
       this.dependencyTracker?.recordBBox(opIdx, this.ctx, trans[4], trans[4] + mask.canvas.width, trans[5], trans[5] + mask.canvas.height);
     }
     ctx.restore();
     if (mask.canvasEntry) {
       this.canvasFactory.destroy(mask.canvasEntry);
+    }
+    if (readerMask?.canvasEntry) { // Firefox PDF Reader
+      this.canvasFactory.destroy(readerMask.canvasEntry);
     }
     this.compose();
     this.dependencyTracker?.recordOperation(opIdx);
@@ -12080,7 +12160,8 @@ class CanvasGraphics {
       const img = this.getObject(opIdx, data, image);
       putBinaryImageMask(maskCtx, img);
       maskCtx.globalCompositeOperation = "source-in";
-      maskCtx.fillStyle = isPatternFill ? fillColor.getPattern(maskCtx, this, getCurrentTransformInverse(ctx), PathType.FILL, opIdx) : fillColor;
+      maskCtx.fillStyle = isPatternFill ? fillColor.getPattern(maskCtx, this, getCurrentTransformInverse(ctx), PathType.FILL, opIdx)
+        : readerStencilColour(this, transform, fillColor); // Firefox PDF Reader
       maskCtx.fillRect(0, 0, width, height);
       maskCtx.restore();
       ctx.save();
@@ -12239,6 +12320,7 @@ class CanvasGraphics {
     for (const entry of map) {
       ctx.save();
       ctx.transform(...entry.transform);
+      readerPicture(this); // Firefox PDF Reader
       ctx.scale(1, -1);
       drawImageAtIntegerCoords(ctx, imgToPaint, entry.x, entry.y, entry.w, entry.h, 0, -1, 1, 1);
       this.dependencyTracker?.recordBBox(opIdx, ctx, 0, 1, -1, 0);
@@ -12257,7 +12339,9 @@ class CanvasGraphics {
     }
     const started = this.#beginKnockoutElement(this.current.fillAlpha);
     this.dependencyTracker?.resetBBox(opIdx).recordBBox(opIdx, this.ctx, 0, 1, 0, 1).recordDependencies(opIdx, Dependencies.fill).recordOperation(opIdx);
+    const readerSaved = readerKeepColours(this, readerUnitBox(getCurrentTransform(this.ctx))); // Firefox PDF Reader
     this.ctx.fillRect(0, 0, 1, 1);
+    readerPutBack(readerSaved);
     this.compose();
     this.#endKnockoutElement(started);
   }
