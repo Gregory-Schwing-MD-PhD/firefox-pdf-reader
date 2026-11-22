@@ -1,7 +1,19 @@
 # Installs the reader on real macOS, Windows and Ubuntu runners and in a
-# Debian container set up like ChromeOS's Linux environment, opens a test PDF
-# through the OS's default-app mechanism, checks Firefox started in kiosk mode
-# with the reader's profile, and saves a screenshot of what's on screen.
+# Debian container set up like ChromeOS's Linux environment, then uses it the
+# way a person would and checks what they would see:
+#   - the reader's profile and settings are in place;
+#   - a PDF opened like a double-click gets a window of its own, titled with
+#     the PDF's file name, filling the screen under the system's title bar;
+#   - a second PDF opened while the reader runs gets a second window of the
+#     same running reader (the system's own window list shows both);
+#   - a colour figure keeps its colours and sharpness: the screen is compared
+#     with poppler's drawing of the same page (tests/compare_colours.py);
+#   - a web link in the PDF opens in a new window;
+#   - Alt+Tab (Cmd+` on macOS) switches between the PDFs' windows;
+#   - F11 (Ctrl+Cmd+F on macOS) makes a window full screen, with a short note
+#     saying how to leave, and F11 (Esc on macOS) takes it back to a window;
+#   - Ctrl+W / Alt+F4 (Cmd+W / Cmd+Q) close the windows and the reader;
+# and saves a screenshot of every step, and the colour comparison, as artifacts.
 name: test
 
 on:
@@ -19,13 +31,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Make sure Firefox is installed
         run: |
           [ -d /Applications/Firefox.app ] || brew install --cask firefox
           defaults read /Applications/Firefox.app/Contents/Info.plist CFBundleShortVersionString
 
+      - name: Install test tools and make the test PDFs
+        run: |
+          brew install poppler
+          python -m pip install --quiet pypdf pillow numpy
+          echo "PDFS=$RUNNER_TEMP/pdfs" >> "$GITHUB_ENV"
+          echo "SHOTS=$RUNNER_TEMP/shots" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/shots"
+          python tests/make_test_pdfs.py "$RUNNER_TEMP/pdfs"
+
       - name: Install the reader
-        run: ./macos/install.sh
+        run: |
+          ./macos/install.sh
+          . tests/macos/reader-windows.sh
+          sleep 3
+          answer_default_app_question
 
       - name: Check the app bundle
         run: |
@@ -35,51 +64,124 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleDocumentTypes:0:LSItemContentTypes:0" "$APP/Contents/Info.plist" | grep -qx com.adobe.pdf
           codesign --verify --verbose "$APP"
 
+      - name: Check the profile
+        run: |
+          P="$HOME/Library/Application Support/FirefoxPDF"
+          ls -la "$P" "$P/chrome"
+          cmp profile/user.js "$P/user.js"
+          cmp profile/chrome/userChrome.css "$P/chrome/userChrome.css"
+          cmp profile/chrome/userContent.css "$P/chrome/userContent.css"
+          grep -q '"sizemode":"maximized"' "$P/xulstore.json"
+
       - name: Check it is the default PDF app
         id: default
         continue-on-error: true
         run: |
-          cp docs/example.pdf "$RUNNER_TEMP/sample.pdf"
-          HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
+          HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$PDFS/paper.pdf')).path.js")"
           echo "PDF handler: $HANDLER"
           [ "$HANDLER" = "$HOME/Applications/Firefox PDF Reader.app" ]
 
-      - name: Open the PDF like a double-click
+      - name: Open a PDF like a double-click
         run: |
+          . tests/macos/reader-windows.sh
           # Use the default handler if it was set, otherwise open with the app directly
-          if [ "${{ steps.default.outcome }}" = success ]; then
-            open "$RUNNER_TEMP/sample.pdf"
-          else
-            open -a "$HOME/Applications/Firefox PDF Reader.app" "$RUNNER_TEMP/sample.pdf"
-          fi
-          for i in $(seq 1 60); do
-            pgrep -f -- "--kiosk.*sample.pdf" >/dev/null && break; sleep 1
-          done
-          ps -axo command | grep -- "--kiosk" | grep -v grep
-          ps -axo command | grep -- "--kiosk" | grep -q "Application Support/FirefoxPDF"
+          if [ "${{ steps.default.outcome }}" = success ]; then open "$PDFS/paper.pdf"
+          else open -a "$HOME/Applications/Firefox PDF Reader.app" "$PDFS/paper.pdf"; fi
+          wait_title paper.pdf 90
+          answer_default_app_question
+          sleep 5
+          shot "$SHOTS/1-first-pdf.png"
+          echo "--- windows:"; reader_windows
+          echo "--- processes:"; reader_processes
+          reader_processes | grep 'Application Support/FirefoxPDF' | grep -q -- '-new-window .*paper.pdf'
+          if front_is_fullscreen; then echo "MISS: the window is full screen"; exit 1; fi
+          front_fills_screen
+
+      - name: Open a second PDF while the reader runs
+        run: |
+          . tests/macos/reader-windows.sh
+          open -a "$HOME/Applications/Firefox PDF Reader.app" "$PDFS/figure.pdf"
+          wait_windows 2 90
+          wait_title figure.pdf
+          sleep 5
+          echo "--- System Events' window list (what Cmd+\` goes through), front first:"; reader_windows
+          echo "--- the window server's list:"; window_server_list
+          echo "--- Firefox main processes (one running reader):"; reader_processes
+          [ "$(reader_processes | grep -c .)" -eq 1 ]
+          front_title | grep -q figure.pdf
+          front_fills_screen
+          sleep 8   # pages drawn
+          shot "$SHOTS/2-second-pdf.png"
 
       - name: Check Firefox loaded the reader settings
         run: |
           PREFS="$HOME/Library/Application Support/FirefoxPDF/prefs.js"
-          for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS"
+          for i in $(seq 1 60); do grep -q 'browser.tabs.inTitlebar' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen' "$PREFS"
+          if grep -q '"pdfjs.forcePageColors", true' "$PREFS"; then echo "MISS: pages are still recoloured"; exit 1; fi
+          grep -q '"browser.tabs.inTitlebar", 0' "$PREFS"
 
-      - name: Screenshot
-        if: always()
+      - name: Colours and sharpness of a colour figure, against poppler's drawing
+        run: python tests/compare_colours.py "$SHOTS/2-second-pdf.png" "$PDFS/figure.pdf" "$SHOTS" --name colours-${{ matrix.os }}
+
+      - name: A web link in the PDF opens in a new window
         run: |
-          sleep 10
-          screencapture -x "$RUNNER_TEMP/screenshot-${{ matrix.os }}.png" || true
+          . tests/macos/reader-windows.sh
+          # The test PDF has an invisible link to example.com across the band
+          # 20-50 points below the top of its page (tests/make_test_pdfs.py)
+          bring_front
+          click_page_point "$SHOTS/colours-${{ matrix.os }}.json" 35
+          wait_windows 3 60
+          wait_title "Example Domain" 60
+          sleep 2
+          shot "$SHOTS/2b-link-in-new-window.png"
+          press 13 command
+          wait_windows 2
+          front_title | grep -q figure.pdf
+
+      - name: Cmd+` switches to the other PDF
+        run: |
+          . tests/macos/reader-windows.sh
+          bring_front
+          press 50 command
+          sleep 3
+          echo "front: $(front_title)"
+          front_title | grep -q paper.pdf
+          shot "$SHOTS/3-cmd-backquote.png"
+
+      - name: Ctrl+Cmd+F makes it full screen, Esc takes it back to a window
+        run: |
+          . tests/macos/reader-windows.sh
+          press 3 control command
+          sleep 3
+          front_is_fullscreen
+          shot "$SHOTS/4-full-screen-with-note.png"
+          sleep 8
+          press 53
+          sleep 4
+          if front_is_fullscreen; then echo "MISS: the window is full screen"; exit 1; fi
+          front_fills_screen
+          shot "$SHOTS/5-window-again.png"
+
+      - name: Cmd+W closes one PDF, Cmd+Q the reader
+        run: |
+          . tests/macos/reader-windows.sh
+          press 13 command
+          wait_windows 1
+          press 12 command
+          for i in $(seq 1 30); do [ -z "$(reader_processes)" ] && break; sleep 1; done
+          [ -z "$(reader_processes)" ]
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshot-${{ matrix.os }}
-          path: ${{ runner.temp }}/screenshot-*.png
+          name: screenshots-${{ matrix.os }}
+          path: ${{ runner.temp }}/shots
           if-no-files-found: ignore
 
       - name: Uninstall
         run: |
-          pkill -f -- "--kiosk" || true
+          pkill -f 'Contents/MacOS/firefox ' || true
           sleep 2
           ./macos/uninstall.sh --remove-profile
           test ! -e "$HOME/Applications/Firefox PDF Reader.app"
@@ -98,14 +200,16 @@ jobs:
 
       - name: First launch sets it up
         run: |
+          . tests/macos/reader-windows.sh
           open -a "/Applications/Firefox PDF Reader.app"
           PROFILE="$HOME/Library/Application Support/FirefoxPDF"
           for i in $(seq 1 60); do [ -f "$PROFILE/.default-app" ] && break; sleep 1; done
           ls -la "$PROFILE" "$PROFILE/chrome"
-          HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$RUNNER_TEMP/sample.pdf')).path.js")"
+          sleep 3
+          answer_default_app_question
+          HANDLER="$(osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(\$.NSURL.fileURLWithPath('$PDFS/paper.pdf')).path.js")"
           echo "PDF handler: $HANDLER"
-          # Newer macOS waits for the person to click "Use Firefox PDF Reader",
-          # which a test can't do; older macOS switches straight away.
+          # macOS may wait for the person to click "Use Firefox PDF Reader"
           if [ "$HANDLER" = "/Applications/Firefox PDF Reader.app" ]; then echo "IS_DEFAULT=1" >> "$GITHUB_ENV"
           else echo "::notice::Default not switched yet: macOS is asking the user to confirm"; fi
           # Close the welcome dialog
@@ -113,15 +217,17 @@ jobs:
 
       - name: Double-click a PDF
         run: |
-          if [ "${IS_DEFAULT:-}" = 1 ]; then open "$RUNNER_TEMP/sample.pdf"
-          else open -a "/Applications/Firefox PDF Reader.app" "$RUNNER_TEMP/sample.pdf"; fi
-          for i in $(seq 1 60); do pgrep -f -- "--kiosk.*sample.pdf" >/dev/null && break; sleep 1; done
-          ps -axo command | grep -- "--kiosk" | grep -v grep | grep -q "Application Support/FirefoxPDF"
+          . tests/macos/reader-windows.sh
+          if [ "${IS_DEFAULT:-}" = 1 ]; then open "$PDFS/paper.pdf"
+          else open -a "/Applications/Firefox PDF Reader.app" "$PDFS/paper.pdf"; fi
+          wait_title paper.pdf 90
+          reader_processes | grep 'Application Support/FirefoxPDF' | grep -q -- '-new-window .*paper.pdf'
+          front_fills_screen
 
       - name: Screenshot (disk image install)
         if: always()
         run: |
-          sleep 10
+          sleep 8
           screencapture -x "$RUNNER_TEMP/dmg-screenshot-${{ matrix.os }}.png" || true
 
       - uses: actions/upload-artifact@v4
@@ -142,19 +248,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install test tools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test tools and make the test PDFs
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb openbox imagemagick xdg-utils desktop-file-utils
+          sudo apt-get install -y xvfb openbox imagemagick xdg-utils desktop-file-utils libgtk-3-bin dbus-x11 wmctrl xdotool x11-utils poppler-utils
+          python -m pip install --quiet pypdf pillow numpy
           command -v firefox && firefox --version
-          # A virtual screen with a window manager (kiosk full screen needs one, as on any desktop)
+          # A virtual screen with a window manager, as on any desktop (openbox
+          # draws title bars and does Alt+Tab and Alt+F4), and a session bus,
+          # over which Firefox hands a second PDF to the running reader
           Xvfb :99 -screen 0 1600x1000x24 &
           sleep 2
           DISPLAY=:99 openbox &
+          eval "$(dbus-launch --sh-syntax)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "PDFS=$RUNNER_TEMP/pdfs" >> "$GITHUB_ENV"
+          echo "SHOTS=$RUNNER_TEMP/shots" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/shots"
+          python tests/make_test_pdfs.py "$RUNNER_TEMP/pdfs"
 
-      - name: Install the reader
-        run: ./linux/install.sh
+      # An update: an install of the last version that used kiosk mode and
+      # recoloured the pages, which leaves its settings in the profile, then
+      # this version's installer run over it.
+      - name: Start from an installed reader of the old kind (version 248c084)
+        run: |
+          curl -fsSL "https://github.com/${{ github.repository }}/archive/248c084395bf65ad6cba1a5cf98a7ac4256d5017.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sh "$RUNNER_TEMP"/firefox-pdf-reader-248c084*/linux/install.sh
+          grep -q -- --kiosk "$HOME/.local/bin/firefox-pdf-reader"
+          "$HOME/.local/bin/firefox-pdf-reader" "$PDFS/figure.pdf" &
+          . tests/linux/reader-windows.sh
+          wait_title figure.pdf 90
+          PREFS="$HOME/.local/share/firefox-pdf-reader/prefs.js"
+          for i in $(seq 1 60); do grep -q '"pdfjs.forcePageColors", true' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep '"pdfjs.forcePageColors", true' "$PREFS"
+          sleep 8
+          # What the old version did to the colour figure: share of colourful
+          # pixels on screen (for the record; the new version is compared with
+          # poppler further down)
+          shot "$SHOTS/0-old-version-figure.png"
+          python -c "import numpy as np, PIL.Image as I, sys; a = np.asarray(I.open(sys.argv[1]).convert('RGB')).astype(int); print('colourful pixels on screen, old version: %.4f%%' % (100 * ((a.max(2) - a.min(2)) > 40).mean()))" "$SHOTS/0-old-version-figure.png"
+          pkill -f -- --kiosk
+          sleep 3
+
+      - name: Install this version over it (running the installer again is the whole update)
+        run: |
+          ./linux/install.sh
+          cat "$HOME/.local/bin/firefox-pdf-reader"
+          if grep -q -- --kiosk "$HOME/.local/bin/firefox-pdf-reader"; then echo "MISS: the launcher still uses kiosk mode"; exit 1; fi
+          grep -q -- -new-window "$HOME/.local/bin/firefox-pdf-reader"
 
       - name: Check it is the default PDF app
         run: |
@@ -162,37 +308,126 @@ jobs:
           desktop-file-validate "$HOME/.local/share/applications/firefox-pdf-reader.desktop"
           [ "$(xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
 
-      - name: Open the PDF through the desktop entry
+      - name: Check the profile
         run: |
-          cp docs/example.pdf "$RUNNER_TEMP/sample.pdf"
-          gtk-launch firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" || "$HOME/.local/bin/firefox-pdf-reader" "$RUNNER_TEMP/sample.pdf" &
-          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
-          ps -eo args | grep -- "--kiosk" | grep -v grep
-          ps -eo args | grep -- "--kiosk" | grep -q "firefox-pdf-reader"
+          P="$(sed -n 's/.*-profile "\([^"]*\)".*/\1/p' "$HOME/.local/bin/firefox-pdf-reader")"
+          echo "PROFILE=$P" >> "$GITHUB_ENV"
+          ls -la "$P" "$P/chrome"
+          cmp profile/user.js "$P/user.js"
+          cmp profile/chrome/userChrome.css "$P/chrome/userChrome.css"
+          cmp profile/chrome/userContent.css "$P/chrome/userContent.css"
+
+      - name: Open a PDF through the desktop entry (what a double-click runs)
+        run: |
+          . tests/linux/reader-windows.sh
+          gtk-launch firefox-pdf-reader "$PDFS/paper.pdf"
+          wait_title paper.pdf 90
+          sleep 5
+          shot "$SHOTS/1-first-pdf.png"
+          echo "--- windows:"; reader_windows
+          echo "--- processes:"; reader_processes
+          reader_processes | grep -F -- "-profile $PROFILE" | grep -q -- '-new-window .*paper.pdf'
+          id="$(window_id paper.pdf)"; xprop -id "$id" _NET_WM_STATE
+          is_maximized "$id"
+          if is_fullscreen "$id"; then echo "MISS: the window is still full screen"; exit 1; fi
+
+      - name: Open a second PDF while the reader runs
+        run: |
+          . tests/linux/reader-windows.sh
+          gtk-launch firefox-pdf-reader "$PDFS/figure.pdf"
+          wait_windows 2 90
+          wait_title figure.pdf
+          sleep 5
+          echo "--- the window manager's list (what Alt+Tab goes through):"; wmctrl -lx
+          echo "--- Firefox main processes (one running reader):"; reader_processes
+          [ "$(reader_processes | grep -c .)" -eq 1 ]
+          for t in paper.pdf figure.pdf; do
+            id="$(window_id $t)"; echo "$t: $(xprop -id "$id" _NET_WM_STATE)"; is_maximized "$id"
+          done
+          echo "front: $(front_title)"; front_title | grep -q figure.pdf
+          sleep 8   # pages drawn
+          shot "$SHOTS/2-second-pdf.png"
 
       - name: Check Firefox loaded the reader settings
         run: |
-          PREFS="$(sed -n 's/.*-profile "\([^"]*\)".*/\1/p' "$HOME/.local/bin/firefox-pdf-reader")/prefs.js"
-          echo "$PREFS"
-          for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS"
+          PREFS="$PROFILE/prefs.js"
+          for i in $(seq 1 60); do grep -q 'browser.tabs.inTitlebar' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen' "$PREFS"
+          # The old version's recolouring is gone from the updated profile
+          if grep -q '"pdfjs.forcePageColors", true' "$PREFS"; then echo "MISS: pages are still recoloured"; exit 1; fi
+          grep -q '"browser.tabs.inTitlebar", 0' "$PREFS"
 
-      - name: Screenshot
-        if: always()
+      - name: Colours and sharpness of a colour figure, against poppler's drawing
+        run: python tests/compare_colours.py "$SHOTS/2-second-pdf.png" "$PDFS/figure.pdf" "$SHOTS" --name colours-ubuntu
+
+      - name: A web link in the PDF opens in a new window
         run: |
-          sleep 10
-          import -window root "$RUNNER_TEMP/screenshot-ubuntu.png" || true
+          . tests/linux/reader-windows.sh
+          # The test PDF has an invisible link to example.com across the band
+          # 20-50 points below the top of its page (tests/make_test_pdfs.py)
+          click_page_point "$SHOTS/colours-ubuntu.json" 35
+          wait_windows 3 60
+          wait_title "Example Domain" 60
+          sleep 2
+          shot "$SHOTS/2b-link-in-new-window.png"
+          xdotool key ctrl+w
+          wait_windows 2
+          xdotool mousemove 800 600
+
+      - name: Alt+Tab switches to the other PDF
+        run: |
+          . tests/linux/reader-windows.sh
+          echo "front before: $(front_title)"
+          xdotool key alt+Tab
+          sleep 2
+          echo "front after: $(front_title)"
+          front_title | grep -q paper.pdf
+          shot "$SHOTS/3-alt-tab.png"
+
+      - name: F11 makes it full screen, and F11 takes it back to a window
+        run: |
+          . tests/linux/reader-windows.sh
+          id="$(window_id paper.pdf)"
+          xdotool key F11
+          sleep 2
+          xprop -id "$id" _NET_WM_STATE
+          is_fullscreen "$id"
+          shot "$SHOTS/4-full-screen-with-note.png"
+          sleep 8
+          # In full screen, the mouse at the top edge brings down Firefox's bar
+          # with its buttons to leave full screen or close
+          xdotool mousemove 800 0
+          sleep 3
+          shot "$SHOTS/5-full-screen-mouse-at-top.png"
+          xdotool mousemove 800 600
+          sleep 2
+          xdotool key F11
+          sleep 3
+          xprop -id "$id" _NET_WM_STATE
+          if is_fullscreen "$id"; then echo "MISS: the window is still full screen"; exit 1; fi
+          is_maximized "$id"
+          shot "$SHOTS/6-window-again.png"
+
+      - name: Ctrl+W closes one PDF, Alt+F4 the other, and the reader ends
+        run: |
+          . tests/linux/reader-windows.sh
+          xdotool key ctrl+w
+          wait_windows 1
+          xdotool key alt+F4
+          wait_windows 0
+          for i in $(seq 1 30); do [ -z "$(reader_processes)" ] && break; sleep 1; done
+          [ -z "$(reader_processes)" ]
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshot-ubuntu
-          path: ${{ runner.temp }}/screenshot-*.png
+          name: screenshots-ubuntu
+          path: ${{ runner.temp }}/shots
           if-no-files-found: ignore
 
       - name: Uninstall
         run: |
-          pkill -f -- "--kiosk" || true
+          pkill -f -- '-profile' || true
           sleep 2
           ./linux/uninstall.sh --remove-profile
           test ! -e "$HOME/.local/bin/firefox-pdf-reader"
@@ -218,15 +453,18 @@ jobs:
 
       - name: Double-click a PDF
         run: |
-          pkill -f -- "--kiosk" || true; sleep 2
-          gtk-launch firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" || firefox-pdf-reader "$RUNNER_TEMP/sample.pdf" &
-          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
-          ps -eo args | grep -- "--kiosk" | grep -v grep | grep -q "firefox-pdf-reader"
+          . tests/linux/reader-windows.sh
+          pkill -f -- '-profile' || true; sleep 2
+          gtk-launch firefox-pdf-reader "$PDFS/paper.pdf"
+          wait_title paper.pdf 90
+          reader_processes | grep -F -- "-profile $HOME/.local/share/firefox-pdf-reader" | grep -q -- '-new-window .*paper.pdf'
+          is_maximized "$(window_id paper.pdf)"
+          ls "$HOME/.local/share/firefox-pdf-reader/chrome/userChrome.css"
 
       - name: Screenshot (.deb install)
         if: always()
         run: |
-          sleep 10
+          sleep 8
           import -window root "$RUNNER_TEMP/deb-screenshot-ubuntu.png" || true
 
       - uses: actions/upload-artifact@v4
@@ -238,9 +476,9 @@ jobs:
 
       - name: Remove the .deb
         run: |
-          pkill -f -- "--kiosk" || true
+          pkill -f -- '-profile' || true
           sudo apt-get remove -y firefox-pdf-reader
-          ! grep -q firefox-pdf-reader /etc/xdg/mimeapps.list
+          if grep -q firefox-pdf-reader /etc/xdg/mimeapps.list; then echo "MISS: the default PDF app entry is still there"; exit 1; fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -255,22 +493,30 @@ jobs:
     runs-on: ubuntu-24.04
     container: debian:bookworm
     env:
-      AS_USER: runuser -u penguin -- env HOME=/home/penguin DISPLAY=:99
+      DISPLAY: ':99'
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up a Crostini-like container
         run: |
           apt-get update
-          apt-get install -y sudo python3 xvfb openbox imagemagick xdg-utils desktop-file-utils procps
+          apt-get install -y sudo python3 xvfb openbox imagemagick xdg-utils desktop-file-utils procps dbus-x11 wmctrl xdotool x11-utils poppler-utils
           mkdir -p /opt/google/cros-containers
           useradd -m -s /bin/bash penguin
           echo 'penguin ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/penguin
           cp -r "$GITHUB_WORKSPACE" /home/penguin/firefox-pdf-reader
           chown -R penguin:penguin /home/penguin/firefox-pdf-reader
+          cp docs/example.pdf /home/penguin/paper.pdf
+          pdfseparate -f 5 -l 5 docs/example.pdf /home/penguin/figure.pdf
+          chown penguin /home/penguin/*.pdf
+          mkdir -p /tmp/shots
           Xvfb :99 -screen 0 1600x1000x24 &
           sleep 2
-          DISPLAY=:99 openbox &
+          openbox &
+          # penguin's session bus, as ChromeOS's Linux has; Firefox hands a
+          # second PDF to the running reader over it
+          eval "$(runuser -u penguin -- dbus-launch --sh-syntax)"
+          echo "AS_USER=runuser -u penguin -- env HOME=/home/penguin DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
 
       - name: Install the reader (installs Firefox ESR first)
         run: $AS_USER sh /home/penguin/firefox-pdf-reader/chromeos/install.sh
@@ -280,37 +526,56 @@ jobs:
           command -v firefox-esr
           [ "$($AS_USER xdg-mime query default application/pdf)" = "firefox-pdf-reader.desktop" ]
 
-      - name: Open the PDF
+      - name: Open two PDFs, one after the other
         run: |
-          cp docs/example.pdf /home/penguin/sample.pdf && chown penguin /home/penguin/sample.pdf
-          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/sample.pdf > /tmp/firefox.log 2>&1 &
-          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
-          ps -eo user,args | grep -- "--kiosk" | grep -v grep
-          ps -eo user,args | grep -- "--kiosk" | grep -q "^penguin"
+          . tests/linux/reader-windows.sh
+          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/paper.pdf > /tmp/firefox.log 2>&1 &
+          wait_title paper.pdf 90 || { cat /tmp/firefox.log; exit 1; }
+          sleep 5
+          shot /tmp/shots/1-first-pdf.png
+          is_maximized "$(window_id paper.pdf)"
+          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/figure.pdf > /tmp/firefox2.log 2>&1 &
+          wait_windows 2 90 || { cat /tmp/firefox.log /tmp/firefox2.log; exit 1; }
+          wait_title figure.pdf
+          sleep 5
+          echo "--- the window manager's list:"; wmctrl -lx
+          echo "--- Firefox main processes:"; reader_processes
+          [ "$(reader_processes | grep -c .)" -eq 1 ]
+          for t in paper.pdf figure.pdf; do is_maximized "$(window_id $t)"; done
+          sleep 8
+          shot /tmp/shots/2-second-pdf.png
 
       - name: Check Firefox loaded the reader settings
         run: |
           PREFS="/home/penguin/.local/share/firefox-pdf-reader/prefs.js"
-          for i in $(seq 1 60); do grep -q 'pdfjs.defaultZoomValue' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' "$PREFS" || { cat /tmp/firefox.log; exit 1; }
+          for i in $(seq 1 60); do grep -q 'browser.tabs.inTitlebar' "$PREFS" 2>/dev/null && break; sleep 1; done
+          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations' "$PREFS" || { cat /tmp/firefox.log; exit 1; }
+          if grep -q '"pdfjs.forcePageColors", true' "$PREFS"; then echo "MISS: pages are still recoloured"; exit 1; fi
 
-      - name: Screenshot
-        if: always()
+      - name: F11 makes it full screen and takes it back
         run: |
-          sleep 10
-          DISPLAY=:99 import -window root /tmp/screenshot-chromeos.png || true
+          . tests/linux/reader-windows.sh
+          id="$(window_id figure.pdf)"
+          xdotool windowactivate --sync "$id"
+          xdotool key F11
+          sleep 3
+          is_fullscreen "$id"
+          shot /tmp/shots/3-full-screen-with-note.png
+          xdotool key F11
+          sleep 3
+          if is_fullscreen "$id"; then echo "MISS: the window is still full screen"; exit 1; fi
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshot-chromeos
-          path: /tmp/screenshot-chromeos.png
+          name: screenshots-chromeos
+          path: /tmp/shots
           if-no-files-found: ignore
 
       # --- The .deb, as ChromeOS's Files app installs it ("Install with Linux") ---
       - name: Install the .deb
         run: |
-          pkill -f -- "--kiosk" || true
+          pkill -f -- '-profile' || true
           sh linux/package/build-deb.sh /tmp/dist "1.0.${{ github.run_number }}"
           sh /home/penguin/firefox-pdf-reader/linux/uninstall.sh --remove-profile || true
           rm -f /home/penguin/.config/mimeapps.list
@@ -319,20 +584,43 @@ jobs:
 
       - name: Open a PDF with the installed package
         run: |
-          $AS_USER firefox-pdf-reader /home/penguin/sample.pdf > /tmp/firefox-deb.log 2>&1 &
-          for i in $(seq 1 60); do pgrep -f -- "--kiosk" >/dev/null && break; sleep 1; done
-          ps -eo user,args | grep -- "--kiosk" | grep -v grep | grep -q "^penguin" || { cat /tmp/firefox-deb.log; exit 1; }
+          . tests/linux/reader-windows.sh
+          sleep 2
+          $AS_USER firefox-pdf-reader /home/penguin/paper.pdf > /tmp/firefox-deb.log 2>&1 &
+          wait_title paper.pdf 90 || { cat /tmp/firefox-deb.log; exit 1; }
+          reader_processes | grep -q -- '-new-window .*paper.pdf'
 
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Make sure Firefox is installed
         shell: pwsh
         run: |
           if (-not (Test-Path "$env:ProgramFiles\Mozilla Firefox\firefox.exe")) { choco install firefox -y --no-progress }
           (Get-Item "$env:ProgramFiles\Mozilla Firefox\firefox.exe").VersionInfo.ProductVersion
+
+      - name: Install test tools (poppler) and make the test PDFs
+        shell: pwsh
+        run: |
+          python -m pip install --quiet pypdf pillow numpy
+          # poppler for Windows, as built from conda-forge's packages by the poppler-windows project
+          Invoke-WebRequest https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip -OutFile "$env:RUNNER_TEMP\poppler.zip"
+          Expand-Archive "$env:RUNNER_TEMP\poppler.zip" "$env:RUNNER_TEMP\poppler"
+          $bin = (Get-ChildItem "$env:RUNNER_TEMP\poppler" -Recurse -Filter pdftoppm.exe | Select-Object -First 1).DirectoryName
+          if (-not $bin) { throw 'pdftoppm missing' }
+          "POPPLER_BIN=$bin" >> $env:GITHUB_ENV
+          "PDFS=$env:RUNNER_TEMP\pdfs" >> $env:GITHUB_ENV
+          "SHOTS=$env:RUNNER_TEMP\shots" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\shots" | Out-Null
+          python tests/make_test_pdfs.py "$env:RUNNER_TEMP\pdfs"
+          Add-Type -AssemblyName System.Windows.Forms
+          "screen: " + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
       - name: Install the reader
         shell: powershell
@@ -347,41 +635,140 @@ jobs:
           (Get-ItemProperty 'HKCU:\Software\RegisteredApplications').FirefoxPDFReader
           Get-ItemProperty 'HKCU:\Software\Classes\.pdf\OpenWithProgids' -Name FirefoxPDFReader | Out-Null
 
-      - name: Open the PDF with the launcher
+      - name: Check the profile
         shell: pwsh
         run: |
-          Copy-Item docs\example.pdf "$env:RUNNER_TEMP\sample.pdf"
-          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:RUNNER_TEMP\sample.pdf`""
-          for ($i = 0; $i -lt 60; $i++) {
-            $p = Get-CimInstance Win32_Process -Filter "Name='firefox.exe'" | Where-Object { $_.CommandLine -match '--kiosk' }
-            if ($p) { break }; Start-Sleep 1
+          $p = "$env:USERPROFILE\FirefoxPDF"
+          Get-ChildItem $p, "$p\chrome" | Format-Table Name, Length | Out-String | Write-Host
+          foreach ($f in 'user.js', 'chrome\userChrome.css', 'chrome\userContent.css') {
+            if ((Get-FileHash "profile\$f").Hash -ne (Get-FileHash "$p\$f").Hash) { throw "$f differs from the repository's" }
           }
-          $p | Select-Object -First 1 -ExpandProperty CommandLine
-          if (-not ($p.CommandLine -match 'FirefoxPDF')) { throw "Firefox was not started with the reader profile" }
+
+      - name: Open a PDF with the launcher (what a double-click runs)
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:PDFS\paper.pdf`""
+          Wait-ReaderWindows 1 90 | Out-Null
+          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'paper\.pdf'); $i++) { Start-Sleep 1 }
+          Start-Sleep 5
+          Save-Screen "$env:SHOTS\1-first-pdf.png"
+          $w = @(Get-ReaderWindows)
+          $w | Format-Table Title, ProcessId, Front, Maximised, FullScreen, TitleBar, Rect -AutoSize | Out-String | Write-Host
+          $paper = $w | Where-Object Title -match 'paper\.pdf'
+          if (-not $paper) { throw 'no window titled with paper.pdf' }
+          if (-not $paper.Maximised -or -not $paper.TitleBar) { throw 'the window does not fill the screen under a title bar' }
+          $procs = @(Get-ReaderProcesses)
+          $procs | Format-List | Out-String | Write-Host
+          if (-not ($procs.CommandLine -match 'FirefoxPDF.*-new-window.*paper\.pdf')) { throw 'Firefox was not started with the reader profile and -new-window' }
+
+      - name: Open a second PDF while the reader runs
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:PDFS\figure.pdf`""
+          Wait-ReaderWindows 2 90 | Out-Null
+          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'figure\.pdf'); $i++) { Start-Sleep 1 }
+          Start-Sleep 5
+          Write-Host "--- Windows' list of top-level windows (what Alt+Tab goes through), front first:"
+          $w = @(Get-ReaderWindows)
+          $w | Format-Table Title, ProcessId, Front, Maximised, FullScreen, TitleBar, Rect -AutoSize | Out-String | Write-Host
+          if (-not ($w.Title -match 'paper\.pdf') -or -not ($w.Title -match 'figure\.pdf')) { throw 'each PDF should have a window titled with its file name' }
+          if (@($w | Where-Object { -not $_.Maximised }).Count) { throw 'both windows should fill the screen' }
+          $procs = @(Get-ReaderProcesses)
+          $procs | Format-List | Out-String | Write-Host
+          if ($procs.Count -ne 1) { throw "expected one running reader, found $($procs.Count) Firefox main processes" }
+          $figure = $w | Where-Object Title -match 'figure\.pdf'
+          if (-not $figure.Front) {
+            Write-Host 'The new window did not come to the front by itself; bringing it forward for the screenshot.'
+            Set-Front $figure
+          }
+          Start-Sleep 8   # pages drawn
+          Save-Screen "$env:SHOTS\2-second-pdf.png"
 
       - name: Check Firefox loaded the reader settings
         shell: pwsh
         run: |
           $prefs = "$env:USERPROFILE\FirefoxPDF\prefs.js"
-          for ($i = 0; $i -lt 60; $i++) { if ((Test-Path $prefs) -and (Select-String -Path $prefs -Pattern 'pdfjs.defaultZoomValue' -Quiet)) { break }; Start-Sleep 1 }
-          Select-String -Path $prefs -Pattern 'pdfjs\.(defaultZoomValue|forcePageColors|viewerCssTheme)|legacyUserProfileCustomizations' | ForEach-Object Line
+          for ($i = 0; $i -lt 60; $i++) { if ((Test-Path $prefs) -and (Select-String -Path $prefs -Pattern 'browser.tabs.inTitlebar' -Quiet)) { break }; Start-Sleep 1 }
+          Select-String -Path $prefs -Pattern 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen' | ForEach-Object Line
+          if (Select-String -Path $prefs -Pattern '"pdfjs.forcePageColors", true' -Quiet) { throw 'pages are still recoloured' }
+          if (-not (Select-String -Path $prefs -Pattern '"browser.tabs.inTitlebar", 0' -Quiet)) { throw 'the system title bar setting is missing' }
 
-      - name: Screenshot
-        if: always()
+      - name: Colours and sharpness of a colour figure, against poppler's drawing
+        shell: pwsh
+        run: python tests/compare_colours.py "$env:SHOTS\2-second-pdf.png" "$env:PDFS\figure.pdf" "$env:SHOTS" --name colours-windows
+
+      - name: A web link in the PDF opens in a new window
         shell: pwsh
         run: |
-          Start-Sleep 10
-          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-          $bmp.Save("$env:RUNNER_TEMP\screenshot-windows.png")
+          . .\tests\windows\reader-windows.ps1
+          # The test PDF has an invisible link to example.com across the band
+          # 20-50 points below the top of its page (tests/make_test_pdfs.py)
+          Invoke-PageClick "$env:SHOTS\colours-windows.json" 35
+          Wait-ReaderWindows 3 60 | Out-Null
+          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'Example Domain'); $i++) { Start-Sleep 1 }
+          Start-Sleep 2
+          Get-ReaderWindows | Format-Table Title, Front, Maximised -AutoSize | Out-String | Write-Host
+          Save-Screen "$env:SHOTS\2b-link-in-new-window.png"
+          if (-not (@(Get-ReaderWindows).Title -match 'Example Domain')) { throw 'the link did not open in a new window' }
+          Send-Keys Ctrl, W
+          Wait-ReaderWindows 2 | Out-Null
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point 500, 500
+
+      - name: Alt+Tab switches to the other PDF
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          Write-Host "front before: $((Get-ReaderWindows | Where-Object Front).Title)"
+          Send-Keys Alt, Tab
+          Start-Sleep 3
+          $front = Get-ReaderWindows | Where-Object Front
+          Write-Host "front after: $($front.Title)"
+          Save-Screen "$env:SHOTS\3-alt-tab.png"
+          if (-not ($front.Title -match 'paper\.pdf')) { throw 'Alt+Tab did not bring the other PDF to the front' }
+
+      - name: F11 makes it full screen, and F11 takes it back to a window
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          Send-Keys F11
+          Start-Sleep 2
+          $w = Get-ReaderWindows | Where-Object Title -match 'paper\.pdf'
+          $w | Format-Table Title, Front, Maximised, FullScreen, TitleBar, Rect -AutoSize | Out-String | Write-Host
+          Save-Screen "$env:SHOTS\4-full-screen-with-note.png"
+          if (-not $w.FullScreen) { throw 'F11 did not make the window full screen' }
+          Start-Sleep 8
+          # In full screen, the mouse at the top edge brings down Firefox's bar
+          # with its buttons to leave full screen or close
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point 500, 0
+          Start-Sleep 3
+          Save-Screen "$env:SHOTS\5-full-screen-mouse-at-top.png"
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point 500, 500
+          Start-Sleep 2
+          Send-Keys F11
+          Start-Sleep 3
+          $w = Get-ReaderWindows | Where-Object Title -match 'paper\.pdf'
+          $w | Format-Table Title, Front, Maximised, FullScreen, TitleBar, Rect -AutoSize | Out-String | Write-Host
+          Save-Screen "$env:SHOTS\6-window-again.png"
+          if ($w.FullScreen -or -not $w.TitleBar) { throw 'F11 did not take it back to a window with a title bar' }
+
+      - name: Ctrl+W closes one PDF, Alt+F4 the other, and the reader ends
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          Send-Keys Ctrl, W
+          Wait-ReaderWindows 1 | Format-Table Title -AutoSize | Out-String | Write-Host
+          Send-Keys Alt, F4
+          Wait-ReaderWindows 0 | Out-Null
+          for ($i = 0; $i -lt 30 -and @(Get-ReaderProcesses).Count; $i++) { Start-Sleep 1 }
+          if (@(Get-ReaderProcesses).Count) { throw 'Firefox is still running' }
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshot-windows
-          path: ${{ runner.temp }}/screenshot-windows.png
+          name: screenshots-windows
+          path: ${{ runner.temp }}/shots
           if-no-files-found: ignore
 
       - name: Uninstall

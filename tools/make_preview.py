@@ -2,8 +2,9 @@
 """Build docs/preview.svg: the README animation of the reader.
 
 Opens the example paper in Firefox with the reader's own profile files
-(user.js + userContent.css), at a 1440x900 viewport, captures the viewer at
-successive scroll positions, stitches them into one tall image, and writes an
+(user.js + chrome/*.css), at a 1440x900 viewport, captures the viewer at
+successive scroll positions from the top of page START_PAGE (the page with
+the paper's colour figure), stitches them into one tall image, and writes an
 SVG that shows a 1440x900 window onto it (rendered at exactly 640x400, the
 same 16:10 shape, nothing cropped), scrolling the way a mouse wheel does.
 
@@ -24,6 +25,7 @@ OUT_W, OUT_H = 640, 400          # size shown in the README (exactly W/H scaled)
 BURST = 430                      # pixels per wheel burst
 BURSTS = 5
 HOLD_START, MOVE, PAUSE, HOLD_END = 2.4, 0.55, 1.7, 2.2   # seconds
+START_PAGE = 5                   # the page with the colour figure
 
 repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -38,7 +40,8 @@ def main():
     prof = tempfile.mkdtemp()
     os.makedirs(os.path.join(prof, "chrome"))
     shutil.copy(os.path.join(repo, "profile", "user.js"), prof)
-    shutil.copy(os.path.join(repo, "profile", "chrome", "userContent.css"), os.path.join(prof, "chrome"))
+    for css in ("userChrome.css", "userContent.css"):
+        shutil.copy(os.path.join(repo, "profile", "chrome", css), os.path.join(prof, "chrome"))
     # Overlay scrollbars that take no space, as on Windows and macOS
     # (the capture machine is Linux, where classic scrollbars take 12px)
     with open(os.path.join(prof, "user.js"), "a") as f:
@@ -76,11 +79,19 @@ def main():
         print(f"page margins left/right: {gaps}", flush=True)
         assert abs(gaps[0] - gaps[1]) <= 2, f"page not centred: {gaps}"
 
+        # Start a little above the top of START_PAGE
+        start = d.execute_script("""
+          const v = document.getElementById('viewerContainer');
+          const p = document.querySelector('.page[data-page-number="' + arguments[0] + '"]');
+          return Math.max(0, Math.round(p.getBoundingClientRect().top - v.getBoundingClientRect().top + v.scrollTop) - 12);""",
+                                 START_PAGE)
+        print(f"page {START_PAGE} starts at scrollTop {start + 12}", flush=True)
         total = BURST * BURSTS
         positions = list(range(0, total, H)) + [total]
         strip = Image.new("RGB", (W, H + total))
         for y in positions:
-            d.execute_script("document.getElementById('viewerContainer').scrollTop = arguments[0]", y)
+            y_abs = start + y
+            d.execute_script("document.getElementById('viewerContainer').scrollTop = arguments[0]", y_abs)
             # wait for pages in view to finish drawing
             for _ in range(40):
                 time.sleep(0.5)
@@ -94,11 +105,11 @@ def main():
                     break
             time.sleep(1.5)
             actual = d.execute_script("return document.getElementById('viewerContainer').scrollTop")
-            assert round(actual) == y, f"scrolled to {actual}, wanted {y}"
+            assert round(actual) == y_abs, f"scrolled to {actual}, wanted {y_abs}"
             shot = Image.open(io.BytesIO(d.get_screenshot_as_png())).convert("RGB")
             assert shot.size == (W, H), f"screenshot is {shot.size}"
             strip.paste(shot, (0, y))
-            print(f"captured scrollTop={y}", flush=True)
+            print(f"captured scrollTop={y_abs}", flush=True)
     finally:
         d.quit()
 
@@ -126,7 +137,7 @@ def main():
     fade_start = (dur - 0.6) / dur
 
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{OUT_W}" height="{OUT_H}" viewBox="0 0 {W} {H}">
-<title>Firefox PDF Reader: the example paper, full screen and dark, scrolling</title>
+<title>Firefox PDF Reader: the example paper's colour figure and text, scrolling</title>
 <clipPath id="screen"><rect width="{W}" height="{H}"/></clipPath>
 <g clip-path="url(#screen)">
 <rect width="{W}" height="{H}" fill="#1c1b1f"/>
