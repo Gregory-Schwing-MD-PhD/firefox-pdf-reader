@@ -579,8 +579,13 @@ jobs:
           chown penguin /home/penguin/*.pdf
           mkdir -p /tmp/shots
           Xvfb :99 -screen 0 1600x1000x24 &
-          sleep 2
+          # The window manager starts once the screen answers, and the step
+          # waits until it runs (openbox started too early sometimes exited,
+          # leaving no window list for the steps below)
+          for i in $(seq 1 60); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.5; done
           openbox &
+          for i in $(seq 1 60); do wmctrl -m >/dev/null 2>&1 && break; sleep 0.5; done
+          wmctrl -m
           # penguin's session bus, as ChromeOS's Linux has; Firefox hands a
           # second PDF to the running reader over it
           eval "$(runuser -u penguin -- dbus-launch --sh-syntax)"
