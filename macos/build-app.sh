@@ -24,6 +24,10 @@ mkdir -p "$RES/profile/chrome"
 cp "$REPO_DIR/profile/user.js" "$RES/profile/"
 cp "$REPO_DIR/profile/chrome/"*.css "$RES/profile/chrome/"
 cp "$REPO_DIR/macos/app/setup.sh" "$RES/"
+# The reader's own viewer (pdf.js, Apache License 2.0; see its NOTICE) and the
+# helper that makes a PDF's address in it
+cp -R "$REPO_DIR/viewer" "$RES/viewer"
+cp "$REPO_DIR/launchers/viewer-url.sh" "$RES/"
 
 # App identity and "opens PDFs"
 PLIST="$APP/Contents/Info.plist"

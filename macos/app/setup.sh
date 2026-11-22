@@ -12,6 +12,12 @@ APP="$(cd "$RES/../.." && pwd)"
 mkdir -p "$PROFILE/chrome"
 cp "$RES/profile/user.js" "$PROFILE/"
 cp "$RES/profile/chrome/"*.css "$PROFILE/chrome/"
+# The reader's viewer (black pages, white text, pictures in their own
+# colours), copied into the profile when the app brings a different one
+if ! cmp -s "$RES/viewer/VERSION" "$PROFILE/viewer/VERSION"; then
+  rm -rf "$PROFILE/viewer"
+  cp -R "$RES/viewer" "$PROFILE/viewer"
+fi
 
 # Open in a window that fills the screen: Firefox restores its window's size
 # mode from xulstore.json, and "maximized" is the closest it supports to

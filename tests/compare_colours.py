@@ -16,8 +16,9 @@ script
 4. measures, over the figure:
    - colour: the mean difference per channel, reader minus poppler, and the
      mean absolute difference per channel (0 to 255); colourfulness (the mean
-     spread between a pixel's strongest and weakest channel) of each drawing;
-     and the median difference of hue over the pixels coloured in both;
+     spread between the strongest and weakest channel, over blocks of 4 x 4
+     pixels) of each drawing; and the median difference of hue over the
+     pixels coloured in both;
    - sharpness: the mean edge strength (size of the change from one pixel to
      the next) of the reader's drawing divided by poppler's. Below 1 is
      blurrier than poppler, above 1 is crisper.
@@ -46,7 +47,11 @@ from PIL import Image
 MAX_MEAN_DIFF = 4.0       # per channel, |reader - poppler| of the means, 0-255
 MAX_MEAN_ABS_DIFF = 12.0  # per channel, mean of |reader - poppler| per pixel
 MIN_SHARPNESS = 0.85      # reader's edge strength / poppler's
-COLOURFULNESS = (0.9, 1.1)  # reader's colourfulness / poppler's
+COLOURFULNESS = (0.8, 1.25)  # reader's colourfulness / poppler's, over 4 x 4 pixel blocks
+                            # (recoloured pages had none: a ratio near 0; poppler on
+                            # Ubuntu draws this figure at 1560 pixels a little paler)
+BLOCK = 4                 # (the two programs scale pictures with different filters,
+                          # which changes the colour of single edge pixels, not of blocks)
 MAX_HUE_DIFF = 5.0        # degrees, median over the pixels coloured in both
 MAX_SHIFT = 4             # pixels searched when lining up the two drawings
 
@@ -156,6 +161,16 @@ def poppler_page(pdf, width, page=1):
     return ref
 
 
+def blocks(rgb, k=BLOCK):
+    """The mean colour of each k x k block of pixels."""
+    h, w = rgb.shape[0] // k * k, rgb.shape[1] // k * k
+    return rgb[:h, :w].reshape(h // k, k, w // k, k, 3).mean(axis=(1, 3))
+
+
+def colourfulness(rgb):
+    return float((rgb.max(2) - rgb.min(2)).mean())
+
+
 def edge_strength(rgb):
     g = rgb @ np.array([0.2126, 0.7152, 0.0722])
     dx = np.abs(np.diff(g, axis=1))[:-1, :]
@@ -203,8 +218,10 @@ def main():
         "mean_rgb_poppler": [round(v, 2) for v in poppler.reshape(-1, 3).mean(0)],
         "mean_difference_rgb": [round(v, 2) for v in diff.reshape(-1, 3).mean(0)],
         "mean_absolute_difference_rgb": [round(v, 2) for v in np.abs(diff).reshape(-1, 3).mean(0)],
-        "colourfulness_reader": round(float((reader.max(2) - reader.min(2)).mean()), 2),
-        "colourfulness_poppler": round(float((poppler.max(2) - poppler.min(2)).mean()), 2),
+        "colourfulness_reader": round(colourfulness(blocks(reader)), 2),
+        "colourfulness_poppler": round(colourfulness(blocks(poppler)), 2),
+        "colourfulness_single_pixels_reader": round(colourfulness(reader), 2),
+        "colourfulness_single_pixels_poppler": round(colourfulness(poppler), 2),
         "median_hue_difference_degrees": median_hue_difference(reader, poppler),
         "edge_strength_reader": round(edge_strength(reader), 3),
         "edge_strength_poppler": round(edge_strength(poppler), 3),

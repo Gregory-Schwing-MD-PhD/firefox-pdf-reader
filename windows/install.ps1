@@ -2,21 +2,22 @@
 .SYNOPSIS
   Sets up "Firefox PDF Reader": every PDF opens in its own Firefox window,
   filling the screen, at page width, scrolling vertically, with no toolbars or
-  panels, and with its pictures in their own colours. F11 makes it full screen
-  and back.
+  panels, on black pages with white text and its pictures in their own
+  colours. F11 makes it full screen and back.
 
 .DESCRIPTION
   1. Creates a dedicated Firefox profile (default: %USERPROFILE%\FirefoxPDF)
-     with the PDF viewer preferences and the style sheets that hide the
-     browser's bars and the PDF toolbar.
+     with the PDF viewer preferences, the style sheets that hide the
+     browser's bars and the PDF toolbar, and the reader's own copy of pdf.js's
+     viewer, which draws pages black with white text.
   2. Compiles a tiny launcher, FirefoxPDF.exe, that opens each PDF in its own
      window of that profile.
   3. Registers the launcher with Windows as a PDF app (current user only).
   4. Opens Settings > Default apps so you can make it the default for .pdf,
      unless it already is. Windows requires that last click to be yours.
 
-  Nothing needs administrator rights, and nothing asks a question. Running it
-  again updates an installed reader to this version.
+  Nothing needs administrator rights, and the script asks no question.
+  Running it again updates an installed reader to this version.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\windows\install.ps1
@@ -61,6 +62,12 @@ Write-Step "Writing Firefox profile files to $ProfileDir"
 New-Item -ItemType Directory -Force -Path (Join-Path $ProfileDir 'chrome') | Out-Null
 Copy-Item (Join-Path $RepoDir 'profile\user.js') $ProfileDir -Force
 Copy-Item (Join-Path $RepoDir 'profile\chrome\*.css') (Join-Path $ProfileDir 'chrome') -Force
+# The reader's own viewer (pdf.js, with black pages and white text), replaced
+# as a whole so nothing of an older copy stays
+$viewerDir = Join-Path $ProfileDir 'viewer'
+if (Test-Path $viewerDir) { Remove-Item $viewerDir -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force -Path $viewerDir | Out-Null
+Copy-Item (Join-Path $RepoDir 'viewer\*') $viewerDir -Recurse -Force
 
 # --- 3. Launcher ------------------------------------------------------------
 Write-Step 'Building FirefoxPDF.exe launcher'

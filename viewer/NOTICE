@@ -1,0 +1,17 @@
+This folder is a copy of pdf.js 6.5.438, Mozilla's PDF viewer for the web
+(https://github.com/mozilla/pdf.js), from its release file
+pdfjs-6.5.438-dist.zip (SHA-256 fcbe9ba21d9911843e3502adc178a7f549a524a4055f887bedc942e5490c6ba1).
+pdf.js is Copyright Mozilla Foundation and the pdf.js contributors, under the
+Apache License 2.0 (LICENSE in this folder). The colour maps, fonts, colour
+profile and WebAssembly parts it comes with carry their own licences, in the
+folders that hold them (web/cmaps, web/standard_fonts, web/iccs, web/wasm).
+
+Firefox PDF Reader changed it with tools/make_viewer.py in its repository
+(https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader):
+- left out: the source maps (*.map) and the sample PDF;
+- build/pdf.mjs: 6 changes, each marked "Firefox PDF Reader": pages are drawn
+  black with white text, and pictures in their own colours;
+- web/viewer.html: reads the reader's settings, web/reader.mjs, before the
+  viewer starts;
+- added: web/reader.mjs (the reader's settings, MIT License), NOTICE and
+  VERSION.

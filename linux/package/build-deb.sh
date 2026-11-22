@@ -18,6 +18,11 @@ install -Dm644 "$REPO_DIR/profile/user.js" "$ROOT/usr/share/$PKG/profile/user.js
 for css in "$REPO_DIR/profile/chrome/"*.css; do
   install -Dm644 "$css" "$ROOT/usr/share/$PKG/profile/chrome/$(basename "$css")"
 done
+# The reader's own viewer (pdf.js, Apache License 2.0; see its NOTICE) and the
+# helper that makes a PDF's address in it
+cp -R "$REPO_DIR/viewer" "$ROOT/usr/share/$PKG/viewer"
+chmod -R u=rwX,go=rX "$ROOT/usr/share/$PKG/viewer"
+install -Dm644 "$REPO_DIR/launchers/viewer-url.sh" "$ROOT/usr/share/$PKG/viewer-url.sh"
 install -Dm644 "$REPO_DIR/LICENSE" "$ROOT/usr/share/doc/$PKG/copyright"
 
 install -d "$ROOT/usr/share/applications"
@@ -47,8 +52,8 @@ Priority: optional
 Homepage: https://gregory-schwing-md-phd.github.io/firefox-pdf-reader/
 Description: Distraction-free PDF reader built on Firefox
  Opens each PDF in its own window of Firefox's PDF viewer, in the reader's own
- profile: a window filling the screen (F11 for full screen), a dark viewer
- around pages and pictures in their own colours, fit to page width,
+ profile: a window filling the screen (F11 for full screen), black pages with
+ white text and pictures in their own colours, fit to page width,
  continuous vertical scrolling, no toolbar or sidebar, and it remembers where
  you left off. Becomes the default PDF app for every user who hasn't chosen
  one.

@@ -1,26 +1,41 @@
-/* Hide Firefox's PDF viewer toolbar and sidebar so only pages show.
-   Nothing here touches the pages themselves: they and their pictures keep
-   their own colours. */
-#toolbarContainer,
-.toolbar,
-#sidebarContainer,
-#pdfFeaturesNotification {  /* "new PDF features" notice; showed at the page's top corners */
-  display: none !important;
-}
-#outerContainer {
-  --toolbar-height: 0px !important;
-}
-#viewerContainer {
-  inset: 0 !important;
-  top: 0 !important;
+/* Firefox PDF Reader: only the pages of pdf.js's PDF viewer are changed here,
+   that is the reader's own viewer and Firefox's built-in one. A page counts
+   when it holds pdf.js's viewer (#viewerContainer around #viewer.pdfViewer);
+   every other page, such as a web page opened from a link in a PDF, is left
+   as it is. Nothing here touches the pages' colours (see reader.mjs in the
+   reader's viewer). */
+
+/* Hide the viewer's toolbar and sidebar so only pages show. The toolbar is
+   made invisible rather than removed, so that pdf.js's own find bar (Ctrl+F,
+   Cmd+F in the reader's viewer) can still open from it, below. */
+:root:has(#viewerContainer > #viewer.pdfViewer) {
+  #outerContainer {
+    --toolbar-height: 0px !important;
+  }
+  .toolbar {
+    visibility: hidden !important;
+  }
+  #sidebarContainer,
+  #pdfFeaturesNotification {  /* "new PDF features" notice; showed at the page's top corners */
+    display: none !important;
+  }
+  #viewerContainer {
+    inset: 0 !important;
+  }
+  #findbar:not(.hidden) {
+    --toolbar-height: 32px !important;
+    visibility: visible !important;
+    position: fixed !important;
+    top: 8px !important;
+    inset-inline: auto 24px !important;
+  }
 }
 
 /* A short note at the bottom of the screen for the first seconds of full
    screen (F11, or Ctrl+Cmd+F on a Mac), saying how to leave it. It shows
-   each time a window goes full screen. #outerContainer exists only in the
-   PDF viewer, so web pages never show it. */
+   each time a window goes full screen. */
 @media (display-mode: fullscreen) {
-  #outerContainer::after {
+  :root:has(#viewerContainer > #viewer.pdfViewer) #outerContainer::after {
     content: "F11 leaves full screen \00B7  Ctrl+W closes this PDF \00B7  Alt+Tab switches PDFs";
     position: fixed;
     left: 50%;
@@ -39,7 +54,7 @@
   }
 }
 @media (display-mode: fullscreen) and (-moz-platform: macos) {
-  #outerContainer::after {
+  :root:has(#viewerContainer > #viewer.pdfViewer) #outerContainer::after {
     content: "Esc leaves full screen \00B7  Cmd+W closes this PDF";
   }
 }

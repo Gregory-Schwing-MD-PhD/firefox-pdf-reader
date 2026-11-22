@@ -2,8 +2,9 @@
 # Firefox PDF Reader launcher (installed by the .deb package as
 # /usr/bin/firefox-pdf-reader). Opens each PDF in its own window of the
 # reader's own Firefox profile, filling the screen (F11 makes it full screen
-# and back). The first time it runs for a user it also makes itself that
-# user's default PDF app.
+# and back), in the reader's own viewer: black pages, white text, pictures in
+# their own colours. The first time it runs for a user it also makes itself
+# that user's default PDF app.
 set -eu
 
 SHARE=/usr/share/firefox-pdf-reader
@@ -41,6 +42,14 @@ fi
 mkdir -p "$PROFILE/chrome"
 cp "$SHARE/profile/user.js" "$PROFILE/"
 cp "$SHARE/profile/chrome/"*.css "$PROFILE/chrome/"
+# The reader's viewer, copied into the profile (where every kind of Firefox
+# may read it) when the package brings a different one
+if ! cmp -s "$SHARE/viewer/VERSION" "$PROFILE/viewer/VERSION"; then
+  rm -rf "$PROFILE/viewer"
+  cp -R "$SHARE/viewer" "$PROFILE/viewer"
+fi
+VIEWER="$PROFILE/viewer/web/viewer.html"
+. "$SHARE/viewer-url.sh"
 
 # A window that fills the screen: Firefox restores its window's size mode from
 # xulstore.json, and "maximized" is the closest it supports to starting full
@@ -55,19 +64,35 @@ if [ ! -e "$PROFILE/.default-set" ] && command -v xdg-mime >/dev/null 2>&1; then
 fi
 
 # -new-window: every PDF gets a window of its own, also when the reader is
-# already running, so Alt+Tab shows each PDF by its file name.
+# already running, so Alt+Tab shows each PDF by its file name. A PDF on this
+# computer opens in the reader's viewer; a web address goes to Firefox as it is.
 if [ "$KIND" = flatpak ]; then
-  # --file-forwarding passes PDFs from anywhere through the document portal
-  # (each file between its own pair of @@)
+  # Flatpak's Firefox sees only the files it is given: flatpak document-export
+  # gives it the PDF (read only) and prints the PDF's path as Firefox sees it.
+  # If that fails, --file-forwarding passes the PDF (between its own pair of
+  # @@) to Firefox's own viewer.
   n=$#
-  for f in "$@"; do set -- "$@" -new-window @@ "$f" @@; done
+  for f in "$@"; do
+    case "$f" in
+      *://*) set -- "$@" -new-window "$f" ;;
+      *) d="$(flatpak document-export --app=org.mozilla.firefox --allow-read "$f" 2>/dev/null || true)"
+         if [ -n "$d" ] && [ -f "$VIEWER" ]; then set -- "$@" -new-window "$(viewer_url "$VIEWER" "$d")"
+         else set -- "$@" -new-window @@ "$f" @@; fi ;;
+    esac
+  done
   shift $n
   exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE" "$@"
 fi
 
 FF="$1"; shift
 n=$#
-for f in "$@"; do set -- "$@" -new-window "$f"; done
+for f in "$@"; do
+  case "$f" in
+    *://*) ;;
+    *) [ -f "$VIEWER" ] && f="$(viewer_url "$VIEWER" "$f")" ;;
+  esac
+  set -- "$@" -new-window "$f"
+done
 shift $n
 export MOZ_USE_XINPUT2=1   # smooth touchpad and high-resolution wheel scrolling on X11
 exec "$FF" -profile "$PROFILE" "$@"

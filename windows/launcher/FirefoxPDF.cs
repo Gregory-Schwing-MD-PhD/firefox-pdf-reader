@@ -1,5 +1,6 @@
 // FirefoxPDF.exe: opens each PDF in its own window of the dedicated Firefox profile,
-// a window that fills the screen (F11 makes it full screen and back).
+// a window that fills the screen (F11 makes it full screen and back), in the
+// reader's own viewer: black pages, white text, pictures in their own colours.
 // install.ps1 compiles this into the profile folder; the profile is the folder the exe sits in.
 using System;
 using System.Diagnostics;
@@ -35,6 +36,32 @@ static class FirefoxPDF
         return null;
     }
 
+    // A file's address (file:///C:/My%20Papers/a.pdf, or file://server/share/a.pdf):
+    // its UTF-8 bytes, all but letters, digits and - . _ ~ / : percent-encoded.
+    static string FileUrl(string path)
+    {
+        string p = Path.GetFullPath(path).Replace('\\', '/');
+        StringBuilder url = new StringBuilder(p.StartsWith("//") ? "file:" : "file:///");
+        foreach (byte b in Encoding.UTF8.GetBytes(p))
+        {
+            char c = (char)b;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || "-._~/:".IndexOf(c) >= 0)
+                url.Append(c);
+            else
+                url.AppendFormat("%{0:X2}", b);
+        }
+        return url.ToString();
+    }
+
+    // What Firefox is asked to open for one PDF: the reader's viewer with the
+    // PDF's address after "?file=", encoded once more. A web address, or any
+    // PDF when the viewer is missing, goes to Firefox as it is.
+    static string Target(string arg, string viewer)
+    {
+        if (arg.Contains("://") || !File.Exists(viewer)) return arg;
+        return FileUrl(viewer) + "?file=" + Uri.EscapeDataString(FileUrl(arg));
+    }
+
     [STAThread]
     static void Main(string[] args)
     {
@@ -47,6 +74,7 @@ static class FirefoxPDF
         }
 
         string profile = Path.GetDirectoryName(Application.ExecutablePath);
+        string viewer = Path.Combine(profile, @"viewer\web\viewer.html");
         try
         {
             File.WriteAllText(Path.Combine(profile, "xulstore.json"), StartWindow, new UTF8Encoding(false));
@@ -61,7 +89,7 @@ static class FirefoxPDF
         // Alt+Tab shows each PDF by its file name.
         StringBuilder arguments = new StringBuilder("-profile \"" + profile + "\"");
         foreach (string a in args)
-            arguments.Append(" -new-window \"" + a + "\"");
+            arguments.Append(" -new-window \"" + Target(a, viewer) + "\"");
 
         Process.Start(new ProcessStartInfo(firefox, arguments.ToString()) { UseShellExecute = false });
     }

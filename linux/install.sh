@@ -3,8 +3,10 @@
 # openSUSE, Linux Mint, Pop!_OS and other desktops that follow the
 # freedesktop.org standards. Also used by chromeos/install.sh.
 #
-# 1. Creates a dedicated Firefox profile with the PDF viewer settings and the
-#    style sheets that hide the browser's bars and the PDF toolbar.
+# 1. Creates a dedicated Firefox profile with the PDF viewer settings, the
+#    style sheets that hide the browser's bars and the PDF toolbar, and the
+#    reader's own copy of pdf.js's viewer (black pages, white text, pictures
+#    in their own colours).
 # 2. Installs a launcher (~/.local/bin/firefox-pdf-reader) and a desktop
 #    entry that open each PDF in its own window of that profile, filling the
 #    screen (F11 makes it full screen and back).
@@ -75,6 +77,9 @@ step "Writing Firefox profile files to $PROFILE_DIR"
 mkdir -p "$PROFILE_DIR/chrome"
 cp "$REPO_DIR/profile/user.js" "$PROFILE_DIR/"
 cp "$REPO_DIR/profile/chrome/"*.css "$PROFILE_DIR/chrome/"
+# The reader's viewer, replaced as a whole so nothing of an older copy stays
+rm -rf "$PROFILE_DIR/viewer"
+cp -R "$REPO_DIR/viewer" "$PROFILE_DIR/viewer"
 
 # --- 3. Launcher and desktop entry -----------------------------------------------
 step "Installing launcher $LAUNCHER"
@@ -87,36 +92,68 @@ mkdir -p "$BIN_DIR" "$APPS_DIR"
 # before every start; it counts when the reader isn't already running.
 START_WINDOW='{"chrome://browser/content/browser.xhtml":{"main-window":{"width":"1280","height":"900","sizemode":"maximized"}}}'
 
+# Each PDF on this computer opens in the reader's own viewer (viewer_url, from
+# launchers/viewer-url.sh, makes its address); a web address goes to Firefox
+# as it is. With no viewer in the profile, PDFs go to Firefox's own viewer.
 if [ "$KIND" = flatpak ]; then
-  # --file-forwarding passes PDFs from anywhere through the document portal
-  # (each file between its own pair of @@)
-  cat > "$LAUNCHER" <<EOF
+  {
+    cat <<EOF
 #!/bin/sh
 # Opens each PDF in its own window of the dedicated Firefox profile, filling
-# the screen (F11 makes it full screen and back).
+# the screen (F11 makes it full screen and back), in the reader's own viewer:
+# black pages, white text, pictures in their own colours.
 printf '%s' '$START_WINDOW' > "$PROFILE_DIR/xulstore.json" 2>/dev/null || true
+EOF
+    cat "$REPO_DIR/launchers/viewer-url.sh"
+    cat <<EOF
+VIEWER="$PROFILE_DIR/viewer/web/viewer.html"
 # -new-window: every PDF gets a window of its own, also when the reader is
 # already running, so Alt+Tab shows each PDF by its file name.
+# Flatpak's Firefox sees only the files it is given: flatpak document-export
+# gives it the PDF (read only) and prints the PDF's path as Firefox sees it.
+# If that fails, --file-forwarding passes the PDF (between its own pair of @@)
+# to Firefox's own viewer.
 n=\$#
-for f in "\$@"; do set -- "\$@" -new-window @@ "\$f" @@; done
+for f in "\$@"; do
+  case "\$f" in
+    *://*) set -- "\$@" -new-window "\$f" ;;
+    *) d="\$(flatpak document-export --app=org.mozilla.firefox --allow-read "\$f" 2>/dev/null || true)"
+       if [ -n "\$d" ] && [ -f "\$VIEWER" ]; then set -- "\$@" -new-window "\$(viewer_url "\$VIEWER" "\$d")"
+       else set -- "\$@" -new-window @@ "\$f" @@; fi ;;
+  esac
+done
 shift \$n
 exec flatpak run --file-forwarding org.mozilla.firefox -profile "$PROFILE_DIR" "\$@"
 EOF
+  } > "$LAUNCHER"
 else
-  cat > "$LAUNCHER" <<EOF
+  {
+    cat <<EOF
 #!/bin/sh
 # Opens each PDF in its own window of the dedicated Firefox profile, filling
-# the screen (F11 makes it full screen and back).
+# the screen (F11 makes it full screen and back), in the reader's own viewer:
+# black pages, white text, pictures in their own colours.
 # MOZ_USE_XINPUT2 gives smooth touchpad and high-resolution wheel scrolling on X11.
 export MOZ_USE_XINPUT2=1
 printf '%s' '$START_WINDOW' > "$PROFILE_DIR/xulstore.json" 2>/dev/null || true
+EOF
+    cat "$REPO_DIR/launchers/viewer-url.sh"
+    cat <<EOF
+VIEWER="$PROFILE_DIR/viewer/web/viewer.html"
 # -new-window: every PDF gets a window of its own, also when the reader is
 # already running, so Alt+Tab shows each PDF by its file name.
 n=\$#
-for f in "\$@"; do set -- "\$@" -new-window "\$f"; done
+for f in "\$@"; do
+  case "\$f" in
+    *://*) ;;
+    *) [ -f "\$VIEWER" ] && f="\$(viewer_url "\$VIEWER" "\$f")" ;;
+  esac
+  set -- "\$@" -new-window "\$f"
+done
 shift \$n
 exec "$FIREFOX_CMD" -profile "$PROFILE_DIR" "\$@"
 EOF
+  } > "$LAUNCHER"
 fi
 chmod +x "$LAUNCHER"
 
@@ -126,6 +163,18 @@ case "$KIND" in
   *)       ICON=firefox ;;
 esac
 
+# The desktop entry's Exec line, by the desktop entry specification: the
+# launcher's path as it is, unless it holds a character other than these
+# plain ones; then in double quotes, with " ` $ and \ escaped by a backslash,
+# and every backslash written twice (the specification's string rule).
+# (xdg-open, on a desktop it doesn't know, can't run a quoted path, so the
+# path is quoted only when it has to be.)
+case "$LAUNCHER" in
+  *[!A-Za-z0-9/._+,=@%:-]*)
+    EXEC_PATH="\"$(printf '%s' "$LAUNCHER" | sed -e 's/\\/\\\\\\\\/g' -e 's/["`$]/\\\\&/g')\"" ;;
+  *) EXEC_PATH="$LAUNCHER" ;;
+esac
+
 step "Installing desktop entry $APPS_DIR/$DESKTOP_ID"
 cat > "$APPS_DIR/$DESKTOP_ID" <<EOF
 [Desktop Entry]
@@ -133,7 +182,7 @@ Type=Application
 Name=Firefox PDF Reader
 GenericName=PDF Reader
 Comment=Read PDFs in Firefox, each in its own window, with no toolbars
-Exec="$LAUNCHER" %F
+Exec=$EXEC_PATH %F
 Icon=$ICON
 Terminal=false
 Categories=Office;Viewer;

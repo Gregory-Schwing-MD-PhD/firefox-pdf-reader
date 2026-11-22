@@ -8,12 +8,18 @@
 #     same running reader (the system's own window list shows both);
 #   - a colour figure keeps its colours and sharpness: the screen is compared
 #     with poppler's drawing of the same page (tests/compare_colours.py);
+#   - pages are black and text white, while a greyscale picture and a chart's
+#     colours stay as the PDF has them (tests/check_dark_page.py, on a page
+#     made by tests/make_test_pdfs.py, opened under a file name with spaces,
+#     #, &, % and an accented letter);
 #   - a web link in the PDF opens in a new window;
 #   - Alt+Tab (Cmd+` on macOS) switches between the PDFs' windows;
 #   - F11 (Ctrl+Cmd+F on macOS) makes a window full screen, with a short note
 #     saying how to leave, and F11 (Esc on macOS) takes it back to a window;
 #   - Ctrl+W / Alt+F4 (Cmd+W / Cmd+Q) close the windows and the reader;
 # and saves a screenshot of every step, and the colour comparison, as artifacts.
+# The viewer job checks that viewer/ is exactly pdf.js's release with the
+# reader's changes (tools/make_viewer.py).
 name: test
 
 on:
@@ -48,6 +54,7 @@ jobs:
           echo "SHOTS=$RUNNER_TEMP/shots" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/shots"
           python tests/make_test_pdfs.py "$RUNNER_TEMP/pdfs"
+          cp "$RUNNER_TEMP/pdfs/chart.pdf" "$RUNNER_TEMP/pdfs/chart page #1 & 50% é.pdf"
 
       - name: Install the reader
         run: |
@@ -71,6 +78,7 @@ jobs:
           cmp profile/user.js "$P/user.js"
           cmp profile/chrome/userChrome.css "$P/chrome/userChrome.css"
           cmp profile/chrome/userContent.css "$P/chrome/userContent.css"
+          diff -r viewer "$P/viewer" && echo "viewer: $(cat "$P/viewer/VERSION")"
           grep -q '"sizemode":"maximized"' "$P/xulstore.json"
 
       - name: Check it is the default PDF app
@@ -117,9 +125,10 @@ jobs:
         run: |
           PREFS="$HOME/Library/Application Support/FirefoxPDF/prefs.js"
           for i in $(seq 1 60); do grep -q 'browser.tabs.inTitlebar' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen' "$PREFS"
+          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen|fileuri' "$PREFS"
           if grep -q '"pdfjs.forcePageColors", true' "$PREFS"; then echo "MISS: pages are still recoloured"; exit 1; fi
           grep -q '"browser.tabs.inTitlebar", 0' "$PREFS"
+          grep -q '"security.fileuri.strict_origin_policy", false' "$PREFS"
 
       - name: Colours and sharpness of a colour figure, against poppler's drawing
         run: python tests/compare_colours.py "$SHOTS/2-second-pdf.png" "$PDFS/figure.pdf" "$SHOTS" --name colours-${{ matrix.os }}
@@ -166,11 +175,11 @@ jobs:
       - name: A page of text, a picture and a chart - black page, white text, the picture and the chart in their own colours
         run: |
           . tests/macos/reader-windows.sh
-          open -a "$HOME/Applications/Firefox PDF Reader.app" "$PDFS/chart.pdf"
+          open -a "$HOME/Applications/Firefox PDF Reader.app" "$PDFS/chart page #1 & 50% é.pdf"
           wait_windows 3 90
-          wait_title chart.pdf
+          wait_title "chart page #1 & 50%"
           bring_front
-          front_title | grep -q chart.pdf
+          echo "front: $(front_title)"; front_title | grep -qF "chart page #1 & 50%"
           sleep 8   # page drawn
           shot "$SHOTS/6-chart-page.png"
           python tests/check_dark_page.py "$SHOTS/6-chart-page.png" "$PDFS/chart.pdf" "$SHOTS" --name dark-page-${{ matrix.os }}
@@ -285,6 +294,7 @@ jobs:
           echo "SHOTS=$RUNNER_TEMP/shots" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/shots"
           python tests/make_test_pdfs.py "$RUNNER_TEMP/pdfs"
+          cp "$RUNNER_TEMP/pdfs/chart.pdf" "$RUNNER_TEMP/pdfs/chart page #1 & 50% é.pdf"
 
       # An update: an install of the last version that used kiosk mode and
       # recoloured the pages, which leaves its settings in the profile, then
@@ -330,12 +340,18 @@ jobs:
           cmp profile/user.js "$P/user.js"
           cmp profile/chrome/userChrome.css "$P/chrome/userChrome.css"
           cmp profile/chrome/userContent.css "$P/chrome/userContent.css"
+          diff -r viewer "$P/viewer" && echo "viewer: $(cat "$P/viewer/VERSION")"
+          # The desktop entry runs the launcher by its plain path, with no
+          # quotes, which xdg-open can run on any desktop
+          grep -x "Exec=$HOME/.local/bin/firefox-pdf-reader %F" "$HOME/.local/share/applications/firefox-pdf-reader.desktop"
 
-      - name: Open a PDF through the desktop entry (what a double-click runs)
+      - name: Open a PDF with xdg-open, through the desktop entry (what a double-click runs)
         run: |
           . tests/linux/reader-windows.sh
-          gtk-launch firefox-pdf-reader "$PDFS/paper.pdf"
-          wait_title paper.pdf 90
+          echo "desktop: ${XDG_CURRENT_DESKTOP:-none known}"
+          # (xdg-open waits for the program it starts, here the reader, so it runs in the background)
+          xdg-open "$PDFS/paper.pdf" > /tmp/xdg-open.log 2>&1 &
+          wait_title paper.pdf 90 || { cat /tmp/xdg-open.log; exit 1; }
           sleep 5
           shot "$SHOTS/1-first-pdf.png"
           echo "--- windows:"; reader_windows
@@ -366,10 +382,11 @@ jobs:
         run: |
           PREFS="$PROFILE/prefs.js"
           for i in $(seq 1 60); do grep -q 'browser.tabs.inTitlebar' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen' "$PREFS"
+          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen|fileuri' "$PREFS"
           # The old version's recolouring is gone from the updated profile
           if grep -q '"pdfjs.forcePageColors", true' "$PREFS"; then echo "MISS: pages are still recoloured"; exit 1; fi
           grep -q '"browser.tabs.inTitlebar", 0' "$PREFS"
+          grep -q '"security.fileuri.strict_origin_policy", false' "$PREFS"
 
       - name: Colours and sharpness of a colour figure, against poppler's drawing
         run: python tests/compare_colours.py "$SHOTS/2-second-pdf.png" "$PDFS/figure.pdf" "$SHOTS" --name colours-ubuntu
@@ -426,11 +443,11 @@ jobs:
         run: |
           . tests/linux/reader-windows.sh
           xdotool mousemove 5 500
-          gtk-launch firefox-pdf-reader "$PDFS/chart.pdf"
+          gtk-launch firefox-pdf-reader "$PDFS/chart page #1 & 50% é.pdf"
           wait_windows 3 90
-          wait_title chart.pdf
+          wait_title "chart page #1 & 50%"
           sleep 2
-          echo "front: $(front_title)"; front_title | grep -q chart.pdf
+          echo "front: $(front_title)"; front_title | grep -qF "chart page #1 & 50%"
           sleep 8   # page drawn
           shot "$SHOTS/7-chart-page.png"
           python tests/check_dark_page.py "$SHOTS/7-chart-page.png" "$PDFS/chart.pdf" "$SHOTS" --name dark-page-ubuntu
@@ -538,6 +555,7 @@ jobs:
           cp docs/example.pdf /home/penguin/paper.pdf
           pdfseparate -f 5 -l 5 docs/example.pdf /home/penguin/figure.pdf
           python3 tests/make_test_pdfs.py /home/penguin --chart-only
+          cp /home/penguin/chart.pdf "/home/penguin/chart page #1 & 50% é.pdf"
           chown penguin /home/penguin/*.pdf
           mkdir -p /tmp/shots
           Xvfb :99 -screen 0 1600x1000x24 &
@@ -579,8 +597,9 @@ jobs:
         run: |
           PREFS="/home/penguin/.local/share/firefox-pdf-reader/prefs.js"
           for i in $(seq 1 60); do grep -q 'browser.tabs.inTitlebar' "$PREFS" 2>/dev/null && break; sleep 1; done
-          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations' "$PREFS" || { cat /tmp/firefox.log; exit 1; }
+          grep -E 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fileuri' "$PREFS" || { cat /tmp/firefox.log; exit 1; }
           if grep -q '"pdfjs.forcePageColors", true' "$PREFS"; then echo "MISS: pages are still recoloured"; exit 1; fi
+          grep -q '"security.fileuri.strict_origin_policy", false' "$PREFS"
 
       - name: F11 makes it full screen and takes it back
         run: |
@@ -599,9 +618,9 @@ jobs:
         run: |
           . tests/linux/reader-windows.sh
           firefox-esr --version
-          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/chart.pdf > /tmp/firefox3.log 2>&1 &
+          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader "/home/penguin/chart page #1 & 50% é.pdf" > /tmp/firefox3.log 2>&1 &
           wait_windows 3 90 || { cat /tmp/firefox3.log; exit 1; }
-          wait_title chart.pdf
+          wait_title "chart page #1 & 50%"
           sleep 10   # page drawn
           shot /tmp/shots/4-chart-page.png
           python3 tests/check_dark_page.py /tmp/shots/4-chart-page.png /home/penguin/chart.pdf /tmp/shots --name dark-page-chromeos
@@ -660,6 +679,7 @@ jobs:
           "SHOTS=$env:RUNNER_TEMP\shots" >> $env:GITHUB_ENV
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\shots" | Out-Null
           python tests/make_test_pdfs.py "$env:RUNNER_TEMP\pdfs"
+          Copy-Item -LiteralPath "$env:RUNNER_TEMP\pdfs\chart.pdf" -Destination "$env:RUNNER_TEMP\pdfs\chart page #1 & 50% é.pdf"
           Add-Type -AssemblyName System.Windows.Forms
           "screen: " + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
@@ -684,6 +704,14 @@ jobs:
           foreach ($f in 'user.js', 'chrome\userChrome.css', 'chrome\userContent.css') {
             if ((Get-FileHash "profile\$f").Hash -ne (Get-FileHash "$p\$f").Hash) { throw "$f differs from the repository's" }
           }
+          # The reader's viewer, file for file
+          function Get-Tree($dir) {
+            $root = (Resolve-Path $dir).Path
+            Get-ChildItem $root -Recurse -File | ForEach-Object { $_.FullName.Substring($root.Length) + ' ' + (Get-FileHash $_.FullName).Hash }
+          }
+          $diff = Compare-Object @(Get-Tree viewer) @(Get-Tree "$p\viewer")
+          if ($diff) { $diff | Out-String | Write-Host; throw 'the viewer in the profile differs from the repository''s' }
+          "viewer: " + (Get-Content "$p\viewer\VERSION")
 
       - name: Open a PDF with the launcher (what a double-click runs)
         shell: pwsh
@@ -732,9 +760,10 @@ jobs:
         run: |
           $prefs = "$env:USERPROFILE\FirefoxPDF\prefs.js"
           for ($i = 0; $i -lt 60; $i++) { if ((Test-Path $prefs) -and (Select-String -Path $prefs -Pattern 'browser.tabs.inTitlebar' -Quiet)) { break }; Start-Sleep 1 }
-          Select-String -Path $prefs -Pattern 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen' | ForEach-Object Line
+          Select-String -Path $prefs -Pattern 'pdfjs\.|inTitlebar|open_newwindow|legacyUserProfileCustomizations|fullscreen|fileuri' | ForEach-Object Line
           if (Select-String -Path $prefs -Pattern '"pdfjs.forcePageColors", true' -Quiet) { throw 'pages are still recoloured' }
           if (-not (Select-String -Path $prefs -Pattern '"browser.tabs.inTitlebar", 0' -Quiet)) { throw 'the system title bar setting is missing' }
+          if (-not (Select-String -Path $prefs -Pattern '"security.fileuri.strict_origin_policy", false' -Quiet)) { throw 'the local file setting is missing' }
 
       - name: Colours and sharpness of a colour figure, against poppler's drawing
         shell: pwsh
@@ -799,11 +828,11 @@ jobs:
         run: |
           . .\tests\windows\reader-windows.ps1
           [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point 5, 400
-          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:PDFS\chart.pdf`""
+          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:PDFS\chart page #1 & 50% é.pdf`""
           Wait-ReaderWindows 3 90 | Out-Null
-          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'chart\.pdf'); $i++) { Start-Sleep 1 }
+          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'chart page #1 & 50%'); $i++) { Start-Sleep 1 }
           Start-Sleep 2
-          $chart = Get-ReaderWindows | Where-Object Title -match 'chart\.pdf'
+          $chart = Get-ReaderWindows | Where-Object Title -match 'chart page #1 & 50%'
           if (-not $chart.Front) { Set-Front $chart }
           Get-ReaderWindows | Format-Table Title, Front, Maximised -AutoSize | Out-String | Write-Host
           Start-Sleep 8   # page drawn
@@ -847,6 +876,20 @@ jobs:
           if (-not (Test-Path 'HKCU:\Software\Classes\FirefoxPDFReader')) { throw "not registered" }
           powershell -ExecutionPolicy Bypass -File .\windows\uninstall.ps1 -RemoveProfile
 
+  # viewer/ is pdf.js's official release with nothing but the reader's
+  # changes: tools/make_viewer.py builds it again from the release (checked
+  # against its SHA-256) and the result must be the same, file for file.
+  viewer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build viewer/ again from pdf.js's release and compare
+        run: |
+          python3 tools/make_viewer.py "$RUNNER_TEMP/viewer"
+          diff -r viewer "$RUNNER_TEMP/viewer"
+          cat viewer/VERSION
+          grep -c "Firefox PDF Reader" viewer/build/pdf.mjs
+
   # After every platform passes on main, publish the downloads to the
   # "latest" release, so these links always serve the newest version:
   #   https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader.dmg
@@ -854,7 +897,7 @@ jobs:
   #   https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader/releases/latest/download/FirefoxPDFReader-Setup.cmd
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [macos, linux, chromeos, windows]
+    needs: [macos, linux, chromeos, windows, viewer]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

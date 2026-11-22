@@ -5,3 +5,7 @@
 *.cmd text eol=crlf
 linux/package/firefox-pdf-reader text eol=lf
 *.applescript text eol=lf
+# The reader's copy of pdf.js's viewer: kept byte for byte as built by
+# tools/make_viewer.py, on every system
+viewer/** -text
+viewer-settings/* text eol=lf

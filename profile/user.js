@@ -8,11 +8,21 @@ user_pref("pdfjs.spreadModeOnLoad", 0);      // 0 = no spreads
 user_pref("pdfjs.sidebarViewOnLoad", 0);     // 0 = sidebar closed
 user_pref("pdfjs.viewerCssTheme", 2);        // 2 = dark viewer around the pages
 
-// ---- Pages and pictures in their own colours
-// pdf.js must not recolour pages. These are Firefox's own defaults, written
-// out so that an older install of the reader (which recoloured every page,
-// pictures included, to grey on near-black) gets them back: Firefox keeps a
-// changed setting until something sets it again.
+// ---- Black pages, white text, pictures in their own colours
+// The reader opens PDFs in its own copy of pdf.js's viewer (the folder
+// "viewer" in this profile), which draws pages black with white text and
+// leaves pictures as they are. Firefox's built-in viewer can't: its page
+// colours (pdfjs.forcePageColors) recolour pictures too. That viewer is a
+// page on this computer (a file:// address) that has to read the PDF, also a
+// file on this computer; Firefox lets one local file read another only with
+// this setting off. It is off in this profile only, not in your own Firefox:
+// a page opened from your disk in the reader can read other files on your
+// disk. Web pages can't, either way.
+user_pref("security.fileuri.strict_origin_policy", false);
+// Firefox's built-in viewer keeps its own defaults (no recolouring), written
+// out so that an older install of the reader, which recoloured every page
+// with them, pictures included, gets them back: Firefox keeps a changed
+// setting until something sets it again.
 user_pref("pdfjs.forcePageColors", false);
 user_pref("pdfjs.pageColorsBackground", "Canvas");
 user_pref("pdfjs.pageColorsForeground", "CanvasText");

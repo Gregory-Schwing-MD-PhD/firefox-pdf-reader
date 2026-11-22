@@ -1,7 +1,9 @@
 -- Firefox PDF Reader.app
 -- Double-click the app: sets itself up (profile, default PDF app).
 -- Open a PDF with it: shows the PDF in its own window of Firefox, filling the
--- screen, using the reader's own Firefox profile (Ctrl+Cmd+F: full screen).
+-- screen, using the reader's own Firefox profile (Ctrl+Cmd+F: full screen),
+-- in the reader's own viewer: black pages, white text, pictures in their own
+-- colours.
 
 on findFirefox()
 	set home to POSIX path of (path to home folder)
@@ -47,11 +49,19 @@ on open theFiles
 		return
 	end if
 	set profileDir to setUp()
+	set res to (POSIX path of (path to me)) & "Contents/Resources/"
+	set viewer to profileDir & "/viewer/web/viewer.html"
 	-- -new-window: every PDF gets a window of its own, also when the reader is
 	-- already running (Firefox hands the request to the running reader).
+	-- Each opens in the reader's viewer: viewer_url (viewer-url.sh) makes its
+	-- address. Without the viewer, the PDF goes to Firefox's own viewer.
 	set args to ""
 	repeat with f in theFiles
-		set args to args & " -new-window " & quoted form of (POSIX path of f)
+		set pdfAddress to POSIX path of f
+		try
+			set pdfAddress to do shell script ". " & quoted form of (res & "viewer-url.sh") & " && test -f " & quoted form of viewer & " && viewer_url " & quoted form of viewer & " " & quoted form of pdfAddress
+		end try
+		set args to args & " -new-window " & quoted form of pdfAddress
 	end repeat
 	do shell script quoted form of ff & " -profile " & quoted form of profileDir & args & " > /dev/null 2>&1 &"
 end open
