@@ -11,14 +11,14 @@ script
    (or a white one: the reader drew pages white before it drew them black),
 2. has poppler's pdftoppm draw the same page at the same width,
 3. finds the figure on poppler's drawing (the block of dark pixels near the
-   top of the page) and lines the two drawings up (a shift of a few pixels at
+   top of the page, without the lines of its caption) and lines the two
+   drawings up (a shift of a few pixels at
    most), and
 4. measures, over the figure:
    - colour: the mean difference per channel, reader minus poppler, and the
      mean absolute difference per channel (0 to 255); colourfulness (the mean
-     spread between the strongest and weakest channel, over blocks of 4 x 4
-     pixels) of each drawing; and the median difference of hue over the
-     pixels coloured in both;
+     spread between a pixel's strongest and weakest channel) of each drawing;
+     and the median difference of hue over the pixels coloured in both;
    - sharpness: the mean edge strength (size of the change from one pixel to
      the next) of the reader's drawing divided by poppler's. Below 1 is
      blurrier than poppler, above 1 is crisper.
@@ -47,11 +47,7 @@ from PIL import Image
 MAX_MEAN_DIFF = 4.0       # per channel, |reader - poppler| of the means, 0-255
 MAX_MEAN_ABS_DIFF = 12.0  # per channel, mean of |reader - poppler| per pixel
 MIN_SHARPNESS = 0.85      # reader's edge strength / poppler's
-COLOURFULNESS = (0.8, 1.25)  # reader's colourfulness / poppler's, over 4 x 4 pixel blocks
-                            # (recoloured pages had none: a ratio near 0; poppler on
-                            # Ubuntu draws this figure at 1560 pixels a little paler)
-BLOCK = 4                 # (the two programs scale pictures with different filters,
-                          # which changes the colour of single edge pixels, not of blocks)
+COLOURFULNESS = (0.9, 1.1)  # reader's colourfulness / poppler's (recoloured pages: near 0)
 MAX_HUE_DIFF = 5.0        # degrees, median over the pixels coloured in both
 MAX_SHIFT = 4             # pixels searched when lining up the two drawings
 
@@ -127,10 +123,20 @@ def find_figure(ref):
     """Top, bottom, left, right of the figure: the block of dark pixels in the top half."""
     h, w, _ = ref.shape
     dark = ref.mean(axis=2) < 70
-    rows = np.where(dark[: h // 2].mean(axis=1) > 0.25)[0]
-    if rows.size == 0:
+    # The longest unbroken run of mostly dark rows (lines of text under the
+    # figure, its caption, are short runs of their own)
+    rows = list(dark[: h // 2].mean(axis=1) > 0.25) + [False]
+    best, start = (0, 0), None
+    for y, inside in enumerate(rows):
+        if inside and start is None:
+            start = y
+        elif not inside and start is not None:
+            if y - start > best[1] - best[0]:
+                best = (start, y)
+            start = None
+    if best[1] - best[0] < 20:
         sys.exit("No figure found near the top of the page.")
-    t, b = int(rows.min()), int(rows.max()) + 1
+    t, b = best
     cols = np.where(dark[t:b].mean(axis=0) > 0.25)[0]
     l, r = int(cols.min()), int(cols.max()) + 1
     m = MAX_SHIFT + 2  # stay inside the figure whatever the shift
@@ -159,12 +165,6 @@ def poppler_page(pdf, width, page=1):
     if ref.shape[1] != width:
         sys.exit(f"pdftoppm drew {ref.shape[1]} pixels wide, wanted {width}")
     return ref
-
-
-def blocks(rgb, k=BLOCK):
-    """The mean colour of each k x k block of pixels."""
-    h, w = rgb.shape[0] // k * k, rgb.shape[1] // k * k
-    return rgb[:h, :w].reshape(h // k, k, w // k, k, 3).mean(axis=(1, 3))
 
 
 def colourfulness(rgb):
@@ -218,10 +218,8 @@ def main():
         "mean_rgb_poppler": [round(v, 2) for v in poppler.reshape(-1, 3).mean(0)],
         "mean_difference_rgb": [round(v, 2) for v in diff.reshape(-1, 3).mean(0)],
         "mean_absolute_difference_rgb": [round(v, 2) for v in np.abs(diff).reshape(-1, 3).mean(0)],
-        "colourfulness_reader": round(colourfulness(blocks(reader)), 2),
-        "colourfulness_poppler": round(colourfulness(blocks(poppler)), 2),
-        "colourfulness_single_pixels_reader": round(colourfulness(reader), 2),
-        "colourfulness_single_pixels_poppler": round(colourfulness(poppler), 2),
+        "colourfulness_reader": round(colourfulness(reader), 2),
+        "colourfulness_poppler": round(colourfulness(poppler), 2),
         "median_hue_difference_degrees": median_hue_difference(reader, poppler),
         "edge_strength_reader": round(edge_strength(reader), 3),
         "edge_strength_poppler": round(edge_strength(poppler), 3),

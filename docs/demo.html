@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reader demo · Firefox PDF Reader</title>
-<meta name="description" content="Try Firefox PDF Reader in your browser: continuous scrolling, nothing but the PDF, pictures in their own colours.">
+<meta name="description" content="Try Firefox PDF Reader in your browser: continuous scrolling, nothing but the PDF, black pages with white text and pictures in their own colours.">
 <style>
   :root {
     --bg: #131215;
-    --page-bg: #fff;
+    --page-bg: #000;
     --page-fg: #dcdcdc;
     --muted: #8b8a91;
     --accent: #8f7bff;
@@ -40,12 +40,14 @@
 <div id="status">Loading PDF…</div>
 <div id="hint"><span>Demo · press F or double-click for full screen</span><button id="fs" type="button">Full screen</button></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script>
+<script type="module">
+// The reader's own copy of pdf.js (viewer/ in the repository, at the commit
+// named here), which draws pages black with white text and leaves pictures
+// as they are
+const VIEWER = 'https://cdn.jsdelivr.net/gh/Gregory-Schwing-MD-PhD/firefox-pdf-reader@9c87408788be03bb64e1b76393978ad373f3ed1a/viewer';
+const pdfjsLib = await import(VIEWER + '/build/pdf.mjs');
 (async () => {
-  const pdfjsLib = window['pdfjs-dist/build/pdf'];
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = VIEWER + '/build/pdf.worker.mjs';
 
   const params = new URLSearchParams(location.search);
   const url = params.get('file') && /^[\w.\-\/]+\.pdf$/.test(params.get('file')) ? params.get('file') : 'example.pdf';
@@ -57,7 +59,12 @@
 
   let pdf;
   try {
-    pdf = await pdfjsLib.getDocument(url).promise;
+    pdf = await pdfjsLib.getDocument({
+      url,
+      cMapUrl: VIEWER + '/web/cmaps/',
+      standardFontDataUrl: VIEWER + '/web/standard_fonts/',
+      wasmUrl: VIEWER + '/web/wasm/',
+    }).promise;
   } catch (e) {
     status.textContent = 'Could not load the PDF.';
     return;
@@ -95,8 +102,8 @@
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(vp.width);
     canvas.height = Math.floor(vp.height);
-    // Pages in their own colours, like the reader (no recolouring)
-    p.task = p.page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+    // Black pages and white text, pictures in their own colours, like the reader
+    p.task = p.page.render({ canvas, viewport: vp, pageColors: { background: '#000000', foreground: '#ffffff' } });
     try {
       await p.task.promise;
       p.div.replaceChildren(canvas);

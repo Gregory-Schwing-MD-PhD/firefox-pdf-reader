@@ -44,13 +44,15 @@ MAX_SHIFT = 6              # pixels searched when lining up the two drawings
 BLACK_MEAN = 4.0           # (a) the empty page: mean of its channels at most this
 BLACK_MOST = 16.0          #     and 99.9% of its pixels' brightest channel at most this
 WHITE_CORE = 235.0         # (b) the brightest fifth of the letters' pixels: at least this bright
-MAX_TEXT_TINT = 20.0       #     and their channels no further apart than this (white, not coloured)
+MAX_TEXT_TINT = 20.0       #     and their channels no further apart than this (white, not coloured;
+                           #     the edges of letters may be tinted by the system's subpixel smoothing)
 INK_RATIO = (0.5, 2.0)     #     letters' pixels, reader's / poppler's
 MAX_MEAN_DIFF = 4.0        # (c) per channel, |reader - poppler| of the means, 0-255
 MAX_MEAN_ABS_DIFF = 12.0   #     per channel, mean of |reader - poppler| per pixel
 MIN_CORRELATION = 0.95     #     brightness, reader against poppler (an inverted picture gives about -1)
 MAX_BAR_DIFF = 8.0         # (d) per channel, a bar's mean colour against the PDF's colour
 AXIS_WHITE = 200.0         #     the axes, where poppler draws them black: at least this bright
+AXIS_BESIDE = 60.0         #     and the page beside them at most this
 GRID_DARK = (15.0, 120.0)  #     the grid lines: dark grey, between these
 
 
@@ -134,8 +136,12 @@ def main():
         r, p = lum(reader(b)), lum(poppler(b))
         ink_r = r > 64                     # letters on the reader's black page
         ink_p = p < 191                    # letters on poppler's white page
-        core = np.sort(r[ink_r])[-max(1, ink_r.sum() // 5):] if ink_r.any() else np.array([0.0])
-        rgb = reader(b)[ink_r] if ink_r.any() else np.zeros((1, 3))
+        if ink_r.any():
+            order = np.argsort(r[ink_r])[-max(1, int(ink_r.sum()) // 5):]   # the brightest fifth
+            core = r[ink_r][order]
+            rgb = reader(b)[ink_r][order]
+        else:
+            core, rgb = np.array([0.0]), np.zeros((1, 3))
         tint = float((rgb.max(1) - rgb.min(1)).mean())
         ratio = float(ink_r.mean() / max(ink_p.mean(), 1e-6))
         entry = {"line": label, "letters_core_brightness": round(float(core.mean()), 1),
@@ -195,19 +201,26 @@ def main():
     gr, gp = lum(reader(gb)).mean(1), lum(poppler(gb)).mean(1)
 
     def on_line(r, p):
-        """The reader's brightness on the line poppler draws there (its
-        darkest row or column), allowing one pixel either way."""
-        i = int(np.argmin(p))
-        return float(r[max(0, i - 1):i + 2].max())
-    v_line, h_line, g_line = on_line(vr, vp), on_line(hr, hp), on_line(gr, gp)
+        """(on, beside): the reader's brightness on the line poppler draws
+        there (the rows or columns poppler draws darker than mid-grey, or
+        else its darkest one, allowing one pixel either way), and beside it
+        (two pixels and more away, on both sides)."""
+        dark = np.where(p < 128)[0]
+        i0, i1 = (int(dark.min()), int(dark.max())) if dark.size else (int(np.argmin(p)),) * 2
+        beside = np.concatenate([r[:max(0, i0 - 2)], r[i1 + 3:]])
+        return float(r[max(0, i0 - 1):i1 + 2].max()), float(beside.mean()) if beside.size else 0.0
+    (v_line, v_beside), (h_line, h_beside), (g_line, _) = on_line(vr, vp), on_line(hr, hp), on_line(gr, gp)
     result["d_chart"].update({
         "left_axis_reader": round(v_line, 1), "left_axis_poppler": round(float(vp.min()), 1),
+        "beside_left_axis_reader": round(v_beside, 1),
         "bottom_axis_reader": round(h_line, 1), "bottom_axis_poppler": round(float(hp.min()), 1),
+        "beside_bottom_axis_reader": round(h_beside, 1),
         "grid_line_reader": round(g_line, 1), "grid_line_poppler": round(float(gp.min()), 1),
         "axis_width_points": aw,
         "limits": {"bar": MAX_BAR_DIFF, "axis_white": AXIS_WHITE, "grid_dark_grey": GRID_DARK}})
-    if v_line < AXIS_WHITE or h_line < AXIS_WHITE:
-        misses.append(f"d: the axes are not white (left {v_line:.0f}, bottom {h_line:.0f})")
+    if v_line < AXIS_WHITE or h_line < AXIS_WHITE or max(v_beside, h_beside) > AXIS_BESIDE:
+        misses.append(f"d: the axes are not white on black (left {v_line:.0f} on {v_beside:.0f}, "
+                      f"bottom {h_line:.0f} on {h_beside:.0f})")
     if not GRID_DARK[0] <= g_line <= GRID_DARK[1]:
         misses.append(f"d: the light grey grid line is not dark grey ({g_line:.0f})")
 

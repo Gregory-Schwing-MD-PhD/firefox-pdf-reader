@@ -1,6 +1,7 @@
-# Builds the README animation (docs/preview.svg) from the real reader:
-# Firefox with the reader's profile files showing docs/example.pdf.
-# Run it from the Actions tab; it commits the new docs/preview.svg.
+# Builds the README animation (docs/preview.svg) and the picture of a whole
+# page (docs/page.png) from the real reader: Firefox with the reader's
+# profile files and viewer showing docs/example.pdf.
+# Run it from the Actions tab; it commits the new docs/preview.svg and docs/page.png.
 name: record-preview
 on: workflow_dispatch
 
@@ -15,18 +16,19 @@ jobs:
       - name: Build the animation
         run: |
           pip install selenium pillow
-          python3 tools/make_preview.py docs/example.pdf docs/preview.svg --frame "$RUNNER_TEMP/first-frame.png"
+          python3 tools/make_preview.py docs/example.pdf docs/preview.svg --frame "$RUNNER_TEMP/first-frame.png" --still docs/page.png
 
       - uses: actions/upload-artifact@v4
         with:
           name: preview
           path: |
             docs/preview.svg
+            docs/page.png
             ${{ runner.temp }}/first-frame.png
 
       - name: Commit it
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/preview.svg
-          git diff --cached --quiet || { git commit -m "Update README animation"; git push; }
+          git add docs/preview.svg docs/page.png
+          git diff --cached --quiet || { git commit -m "Update README animation and page picture"; git push; }

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build docs/preview.svg: the README animation of the reader.
 
-Opens the example paper in Firefox with the reader's own profile files
-(user.js + chrome/*.css), at a 1440x900 viewport, captures the viewer at
+Opens the example paper in the reader's own viewer (viewer/, black pages
+with white text, pictures in their own colours), in Firefox with the
+reader's own profile files (user.js + chrome/*.css), at a 1440x900 viewport, captures the viewer at
 successive scroll positions from the top of page START_PAGE (the page with
 the paper's colour figure), stitches them into one tall image, and writes an
 SVG that shows a 1440x900 window onto it (rendered at exactly 640x400, the
@@ -11,10 +12,14 @@ same 16:10 shape, nothing cropped), scrolling the way a mouse wheel does.
 An SVG plays by itself with no player controls in a GitHub README (GitHub
 adds a pause button to animated GIFs).
 
-Usage: python3 tools/make_preview.py PDF OUT.svg [--frame OUT.png]
+With --still, it also saves a picture of the whole of page START_PAGE, as
+the reader draws it, for the README.
+
+Usage: python3 tools/make_preview.py PDF OUT.svg [--frame OUT.png] [--still OUT.png]
 Needs: Firefox, geckodriver, selenium, pillow.
 """
-import argparse, base64, io, os, shutil, sys, tempfile, time
+import argparse, base64, io, os, shutil, sys, tempfile, time, urllib.parse
+from pathlib import Path
 
 from PIL import Image
 from selenium import webdriver
@@ -35,6 +40,7 @@ def main():
     ap.add_argument("pdf")
     ap.add_argument("out")
     ap.add_argument("--frame")
+    ap.add_argument("--still")
     a = ap.parse_args()
 
     prof = tempfile.mkdtemp()
@@ -56,7 +62,9 @@ def main():
     try:
         # Size the window so the page area is exactly W x H
         d.set_window_size(W, H)
-        d.get("file://" + os.path.abspath(a.pdf))
+        # The reader's viewer with the PDF's address after "?file=", as the launchers open it
+        viewer = Path(repo, "viewer", "web", "viewer.html").resolve().as_uri()
+        d.get(viewer + "?file=" + urllib.parse.quote(Path(a.pdf).resolve().as_uri(), safe=""))
         time.sleep(6)
         iw, ih = d.execute_script("return [innerWidth, innerHeight]")
         d.set_window_size(W + (W - iw), H + (H - ih))
@@ -110,6 +118,30 @@ def main():
             assert shot.size == (W, H), f"screenshot is {shot.size}"
             strip.paste(shot, (0, y))
             print(f"captured scrollTop={y_abs}", flush=True)
+
+        if a.still:
+            # The whole page, at the size of a tall window
+            d.set_window_size(1100, 1500)
+            time.sleep(2)
+            d.execute_script("PDFViewerApplication.pdfViewer.currentScaleValue = 'page-fit';"
+                             "PDFViewerApplication.page = arguments[0];", START_PAGE)
+            for _ in range(40):
+                time.sleep(0.5)
+                if d.execute_script("""
+                  const p = document.querySelector('.page[data-page-number="' + arguments[0] + '"]');
+                  return !!p.querySelector('canvas') && !p.querySelector('.loadingIcon:not(.notVisible)');""",
+                                    START_PAGE):
+                    break
+            time.sleep(2)
+            box = d.execute_script("""
+              const r = document.querySelector('.page[data-page-number="' + arguments[0] + '"]').getBoundingClientRect();
+              return [r.left, r.top, r.right, r.bottom].map(Math.round);""", START_PAGE)
+            shot = Image.open(io.BytesIO(d.get_screenshot_as_png())).convert("RGB")
+            m = 12   # a little of the dark viewer around the page
+            page = shot.crop((max(0, box[0] - m), max(0, box[1] - m),
+                              min(shot.width, box[2] + m), min(shot.height, box[3] + m)))
+            page.save(a.still, optimize=True)
+            print(f"wrote {a.still}: page {START_PAGE}, {page.width}x{page.height}", flush=True)
     finally:
         d.quit()
 
