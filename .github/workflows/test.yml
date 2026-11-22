@@ -163,6 +163,20 @@ jobs:
           front_fills_screen
           shot "$SHOTS/5-window-again.png"
 
+      - name: A page of text, a picture and a chart - black page, white text, the picture and the chart in their own colours
+        run: |
+          . tests/macos/reader-windows.sh
+          open -a "$HOME/Applications/Firefox PDF Reader.app" "$PDFS/chart.pdf"
+          wait_windows 3 90
+          wait_title chart.pdf
+          bring_front
+          front_title | grep -q chart.pdf
+          sleep 8   # page drawn
+          shot "$SHOTS/6-chart-page.png"
+          python tests/check_dark_page.py "$SHOTS/6-chart-page.png" "$PDFS/chart.pdf" "$SHOTS" --name dark-page-${{ matrix.os }}
+          press 13 command
+          wait_windows 2
+
       - name: Cmd+W closes one PDF, Cmd+Q the reader
         run: |
           . tests/macos/reader-windows.sh
@@ -408,6 +422,21 @@ jobs:
           is_maximized "$id"
           shot "$SHOTS/6-window-again.png"
 
+      - name: A page of text, a picture and a chart - black page, white text, the picture and the chart in their own colours
+        run: |
+          . tests/linux/reader-windows.sh
+          xdotool mousemove 5 500
+          gtk-launch firefox-pdf-reader "$PDFS/chart.pdf"
+          wait_windows 3 90
+          wait_title chart.pdf
+          sleep 2
+          echo "front: $(front_title)"; front_title | grep -q chart.pdf
+          sleep 8   # page drawn
+          shot "$SHOTS/7-chart-page.png"
+          python tests/check_dark_page.py "$SHOTS/7-chart-page.png" "$PDFS/chart.pdf" "$SHOTS" --name dark-page-ubuntu
+          xdotool key ctrl+w
+          wait_windows 2
+
       - name: Ctrl+W closes one PDF, Alt+F4 the other, and the reader ends
         run: |
           . tests/linux/reader-windows.sh
@@ -500,7 +529,7 @@ jobs:
       - name: Set up a Crostini-like container
         run: |
           apt-get update
-          apt-get install -y sudo python3 xvfb openbox imagemagick xdg-utils desktop-file-utils procps dbus-x11 wmctrl xdotool x11-utils poppler-utils
+          apt-get install -y sudo python3 python3-numpy python3-pil xvfb openbox imagemagick xdg-utils desktop-file-utils procps dbus-x11 wmctrl xdotool x11-utils poppler-utils
           mkdir -p /opt/google/cros-containers
           useradd -m -s /bin/bash penguin
           echo 'penguin ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/penguin
@@ -508,6 +537,7 @@ jobs:
           chown -R penguin:penguin /home/penguin/firefox-pdf-reader
           cp docs/example.pdf /home/penguin/paper.pdf
           pdfseparate -f 5 -l 5 docs/example.pdf /home/penguin/figure.pdf
+          python3 tests/make_test_pdfs.py /home/penguin --chart-only
           chown penguin /home/penguin/*.pdf
           mkdir -p /tmp/shots
           Xvfb :99 -screen 0 1600x1000x24 &
@@ -564,6 +594,17 @@ jobs:
           xdotool key F11
           sleep 3
           if is_fullscreen "$id"; then echo "MISS: the window is still full screen"; exit 1; fi
+
+      - name: A page of text, a picture and a chart - black page, white text, the picture and the chart in their own colours
+        run: |
+          . tests/linux/reader-windows.sh
+          firefox-esr --version
+          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/chart.pdf > /tmp/firefox3.log 2>&1 &
+          wait_windows 3 90 || { cat /tmp/firefox3.log; exit 1; }
+          wait_title chart.pdf
+          sleep 10   # page drawn
+          shot /tmp/shots/4-chart-page.png
+          python3 tests/check_dark_page.py /tmp/shots/4-chart-page.png /home/penguin/chart.pdf /tmp/shots --name dark-page-chromeos
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -752,6 +793,25 @@ jobs:
           $w | Format-Table Title, Front, Maximised, FullScreen, TitleBar, Rect -AutoSize | Out-String | Write-Host
           Save-Screen "$env:SHOTS\6-window-again.png"
           if ($w.FullScreen -or -not $w.TitleBar) { throw 'F11 did not take it back to a window with a title bar' }
+
+      - name: A page of text, a picture and a chart - black page, white text, the picture and the chart in their own colours
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point 5, 400
+          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:PDFS\chart.pdf`""
+          Wait-ReaderWindows 3 90 | Out-Null
+          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'chart\.pdf'); $i++) { Start-Sleep 1 }
+          Start-Sleep 2
+          $chart = Get-ReaderWindows | Where-Object Title -match 'chart\.pdf'
+          if (-not $chart.Front) { Set-Front $chart }
+          Get-ReaderWindows | Format-Table Title, Front, Maximised -AutoSize | Out-String | Write-Host
+          Start-Sleep 8   # page drawn
+          Save-Screen "$env:SHOTS\7-chart-page.png"
+          python tests/check_dark_page.py "$env:SHOTS\7-chart-page.png" "$env:PDFS\chart.pdf" "$env:SHOTS" --name dark-page-windows
+          if ($LASTEXITCODE) { throw 'the black page, white text and colours check missed' }
+          Send-Keys Ctrl, W
+          Wait-ReaderWindows 2 | Out-Null
 
       - name: Ctrl+W closes one PDF, Alt+F4 the other, and the reader ends
         shell: pwsh
