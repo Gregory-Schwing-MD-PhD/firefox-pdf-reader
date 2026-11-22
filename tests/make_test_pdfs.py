@@ -20,8 +20,21 @@ Usage: python tests/make_test_pdfs.py OUTDIR [--chart-only]
                      grey grid lines). Its layout is CHART below, in points
                      from the page's top left corner; tests/check_dark_page.py
                      reads it from here.
+  OUTDIR/mixed.pdf   a second page made here (US Letter wide, 360 points
+                     tall): a scanned page stored the small-file way, as a
+                     picture of the paper with its letters drawn on top as
+                     black stencils (one large stencil, a group of small
+                     ones, one small one repeated, and two Type3 fonts, one
+                     drawn with stencils and one with shapes); coloured boxes
+                     with text on them (pale blue, yellow, dark blue, a white
+                     box on a strong blue one) and a very pale blue box; a
+                     line of black text on the page; and black labels on a
+                     picture drawn four times over and on a group of small
+                     pictures. Its layout is MIXED below; tests/
+                     check_mixed_page.py reads it from here.
 
-Needs: numpy, and pypdf for figure.pdf (not with --chart-only).
+Needs: numpy, and pypdf for figure.pdf (not with --chart-only, which makes
+chart.pdf and mixed.pdf only).
 """
 import os
 import shutil
@@ -67,6 +80,239 @@ CHART = {
               "grid": [0.25, 0.5, 0.75, 1.0],            # light grey grid lines (share of height)
               "grid_grey": 0.8},
 }
+
+
+MIXED_PAGE = (612, 360)
+# Boxes are (x, top, width, height) in points from the page's top left.
+MIXED = {
+    # The scanned page: a picture of the paper; on it, the letters as black
+    # stencils, in bands (what each band is, its box)
+    "paper": {"box": (36, 20, 260, 130), "rgb": (239, 233, 221), "pixels_per_point": 2},
+    "scan_bands": [
+        ("one large stencil", (46, 28, 240, 36)),
+        ("a group of small stencils", (46, 72, 236, 16)),
+        ("one small stencil repeated", (46, 96, 236, 16)),
+        ("Type3 font drawn with stencils", (46, 122, 112, 18)),
+        ("Type3 font drawn with shapes", (172, 122, 112, 18)),
+    ],
+    # Coloured boxes, each with a line of text (text colour 0 = black, 1 = white)
+    "boxes": [
+        ("pale blue box", (316, 20, 124, 36), (219, 233, 246), 0, "Black on pale blue"),
+        ("yellow box", (452, 20, 124, 36), (255, 221, 0), 0, "Black on yellow"),
+        ("dark blue box", (316, 64, 124, 36), (31, 56, 100), 1, "White on dark blue"),
+    ],
+    # A white box with black text, on a strong blue box (as on a poster)
+    "poster": {"blue": (452, 64, 124, 80), "blue_rgb": (40, 90, 200),
+               "white": (462, 72, 104, 34), "text": "On a white box"},
+    # A very pale blue box, no text
+    "pale_tint": {"box": (316, 108, 124, 36), "rgb": (238, 243, 251)},
+    # Black text on the page
+    "page_text": {"box": (316, 154, 260, 14), "size": 11, "text": "Black text on the page, as most pages print it."},
+    # One picture drawn four times (2 x 2), and twelve small pictures; a black
+    # label on each
+    "repeated": {"box": (36, 176, 160, 160), "label": (132, 276, 58, 18)},
+    "group": {"box": (216, 176, 160, 120), "label": (232, 196, 58, 18)},
+    "text_size": 10,
+    "label_size": 15,
+}
+
+
+def glyph_bitmaps(count, w, h, seed):
+    """Letter-like one-colour bitmaps: strokes on a w x h grid of cells."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(count):
+        cells = np.zeros((7, 5), bool)
+        cells[:, 0] = rng.random() < 0.7                  # a left stem
+        cells[0, :] = rng.random() < 0.6                  # a top bar
+        cells[3, :] = rng.random() < 0.6                  # a middle bar
+        cells[6, :] = rng.random() < 0.6                  # a bottom bar
+        cells[:, 4] = rng.random() < 0.5                  # a right stem
+        cells |= rng.random((7, 5)) < 0.12
+        if not cells.any():
+            cells[:, 2] = True
+        g = np.kron(cells, np.ones((h // 7, w // 5), bool))
+        pad = np.zeros((h, w), bool)
+        pad[:g.shape[0], :g.shape[1]] = g
+        out.append(pad)
+    return out
+
+
+def stencil_bits(ink):
+    """An image mask's data: 1 bit a pixel, rows padded to bytes; with the
+    default Decode [0 1] a 0 bit is painted."""
+    return np.packbits(np.where(ink, 0, 1).astype(np.uint8), axis=1).tobytes()
+
+
+def write_pdf(path, objects):
+    """objects: the bodies of objects 1, 2, ... (object 1 is the catalog)."""
+    data = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    offsets = []
+    for i, body in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f"{i} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(data)
+    data += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for off in offsets:
+        data += f"{off:010d} 00000 n \n".encode()
+    data += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def make_mixed_pdf(out):
+    W, H = MIXED_PAGE
+    m = MIXED
+    objects = []
+
+    def add(body):
+        objects.append(body if isinstance(body, bytes) else body.encode())
+        return len(objects)
+
+    def stream(dictionary, data, flate=True):
+        if flate:
+            data = zlib.compress(data)
+            dictionary += " /Filter /FlateDecode"
+        return add(f"<< {dictionary} /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream")
+
+    def cm(box):
+        x, top, w, h = box
+        return f"{w} 0 0 {h} {x} {H - top - h} cm"
+
+    for _ in range(5):                                   # catalog, pages, page, two fonts
+        add(b"")
+    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    objects[1] = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
+    objects[3] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+    objects[4] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"
+    xobjects = {}
+    ops = []
+    rng = np.random.default_rng(20261123)
+
+    # The scanned page: the paper as a colour picture, faintly uneven
+    p = m["paper"]
+    x, top, w, h = p["box"]
+    k = p["pixels_per_point"]
+    paper = np.empty((h * k, w * k, 3))
+    paper[:] = p["rgb"]
+    paper += rng.normal(0, 3, paper.shape[:2])[..., None]
+    paper += np.linspace(-4, 4, w * k)[None, :, None]
+    paper = np.clip(np.round(paper), 0, 255).astype(np.uint8)
+    xobjects["Paper"] = stream(f"/Type /XObject /Subtype /Image /Width {w * k} /Height {h * k} "
+                               "/ColorSpace /DeviceRGB /BitsPerComponent 8", paper.tobytes())
+    ops.append(f"q {cm(p['box'])} /Paper Do Q")
+    ops.append("0 g")
+    bands = dict(m["scan_bands"])
+    # One large stencil: lines of letters, as a scan's text layer is stored
+    bx, bt, bw, bh = bands["one large stencil"]
+    ink = np.zeros((bh * k, bw * k), bool)
+    letters = glyph_bitmaps(60, 15, 21, 1)
+    i = 0
+    for row in range(2):
+        cx = 2
+        while cx + 15 < bw * k:
+            if rng.random() < 0.18:                      # a space between words
+                cx += 10
+                continue
+            y0 = 6 + row * 36
+            ink[y0:y0 + 21, cx:cx + 15] |= letters[i % len(letters)]
+            i += 1
+            cx += 19
+    xobjects["Stencil"] = stream(f"/Type /XObject /Subtype /Image /Width {bw * k} /Height {bh * k} "
+                                 "/ImageMask true /BitsPerComponent 1", stencil_bits(ink))
+    ops.append(f"q {cm(bands['one large stencil'])} /Stencil Do Q")
+    ops.append("0 g")                                    # (keeps pdf.js from joining the stencils below to this one)
+    # Twelve small stencils, all different, drawn twice in the same places:
+    # pdf.js draws the first time one by one, and the second time, from its
+    # store of images already read, as one group
+    bx, bt, bw, bh = bands["a group of small stencils"]
+    for j, g in enumerate(glyph_bitmaps(12, 30, 35, 2)):
+        xobjects[f"Small{j}"] = stream("/Type /XObject /Subtype /Image /Width 30 /Height 35 "
+                                       "/ImageMask true /BitsPerComponent 1", stencil_bits(g))
+    for _ in range(2):
+        for j in range(12):
+            ops.append(f"q {cm((bx + j * 20, bt, 14, bh))} /Small{j} Do Q")
+    # One small stencil twelve times at the same size (pdf.js draws the first
+    # one by itself and the other eleven as one repeated stencil)
+    ops.append("0 g")
+    bx, bt, bw, bh = bands["one small stencil repeated"]
+    xobjects["Repeat"] = stream("/Type /XObject /Subtype /Image /Width 30 /Height 35 "
+                                "/ImageMask true /BitsPerComponent 1", stencil_bits(glyph_bitmaps(1, 30, 35, 3)[0]))
+    for j in range(12):
+        ops.append(f"q {cm((bx + j * 20, bt, 14, bh))} /Repeat Do Q")
+    # Two Type3 fonts: letters drawn with a stencil, and letters drawn with shapes
+    gl = np.zeros((28, 20), bool)                        # a thick-stroked E
+    gl[2:26, 2:7] = gl[2:7, 2:18] = gl[12:16, 2:15] = gl[21:26, 2:18] = True
+    hexdata = stencil_bits(gl).hex()
+    bitmap_glyph = stream("", (f"600 0 0 0 600 800 d1 q 600 0 0 800 0 0 cm "
+                               f"BI /IM true /W 20 /H 28 /F /AHx ID\n{hexdata}>\nEI Q").encode())
+    shape_glyph = stream("", b"600 0 0 0 600 800 d1 40 0 m 560 0 l 560 800 l 40 800 l h "
+                             b"180 140 m 180 660 l 420 660 l 420 140 l h f*")
+    fonts = {}
+    for name, glyph in (("T3a", bitmap_glyph), ("T3b", shape_glyph)):
+        fonts[name] = add(f"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 600 800] "
+                          f"/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a {glyph} 0 R >> "
+                          f"/Encoding << /Type /Encoding /Differences [97 /a] >> /FirstChar 97 /LastChar 97 "
+                          f"/Widths [700] /Resources << >> >>")
+    for name, band in (("T3a", "Type3 font drawn with stencils"), ("T3b", "Type3 font drawn with shapes")):
+        bx, bt, bw, bh = bands[band]
+        ops.append(f"BT /{name} {bh} Tf 0 g {bx} {H - bt - bh:.2f} Td (aaaaaaaa) Tj ET")
+
+    # Coloured boxes with text on them
+    size = m["text_size"]
+    for _, (x, top, w, h), (r, g, b), text_grey, text in m["boxes"]:
+        ops.append(f"{r / 255:.4f} {g / 255:.4f} {b / 255:.4f} rg {x} {H - top - h} {w} {h} re f")
+        ops.append(f"BT /F1 {size} Tf {text_grey} g {x + 6} {H - top - h / 2 - size * 0.35:.2f} Td "
+                   f"({pdf_text(text)}) Tj ET")
+    po = m["poster"]
+    x, top, w, h = po["blue"]
+    r, g, b = po["blue_rgb"]
+    ops.append(f"{r / 255:.4f} {g / 255:.4f} {b / 255:.4f} rg {x} {H - top - h} {w} {h} re f")
+    x, top, w, h = po["white"]
+    ops.append(f"1 g {x} {H - top - h} {w} {h} re f")
+    ops.append(f"BT /F1 {size} Tf 0 g {x + 6} {H - top - h / 2 - size * 0.35:.2f} Td ({pdf_text(po['text'])}) Tj ET")
+    pt = m["pale_tint"]
+    x, top, w, h = pt["box"]
+    r, g, b = pt["rgb"]
+    ops.append(f"{r / 255:.4f} {g / 255:.4f} {b / 255:.4f} rg {x} {H - top - h} {w} {h} re f")
+    tx = m["page_text"]
+    x, top, w, h = tx["box"]
+    ops.append(f"BT /F2 {tx['size']} Tf 0 g {x} {H - top - tx['size']:.2f} Td ({pdf_text(tx['text'])}) Tj ET")
+
+    # One light picture drawn four times (pdf.js draws the first by itself and
+    # the other three as one repeated picture; the label is on the last)
+    yy, xx = np.mgrid[0:160, 0:160] / 159.0
+    tile = np.stack([215 + 35 * xx, 200 + 45 * yy, 245 - 30 * xx * yy], axis=2)
+    tile += rng.normal(0, 3, tile.shape[:2])[..., None]
+    tile = np.clip(np.round(tile), 0, 255).astype(np.uint8)
+    xobjects["Tile"] = stream("/Type /XObject /Subtype /Image /Width 160 /Height 160 "
+                              "/ColorSpace /DeviceRGB /BitsPerComponent 8", tile.tobytes())
+    x, top, w, h = m["repeated"]["box"]
+    for dx in (0, w / 2):
+        for dy in (0, h / 2):
+            ops.append(f"q {cm((x + dx, top + dy, w / 2, h / 2))} /Tile Do Q")
+    # Twelve small light pictures as inline images (pdf.js draws these as one group)
+    x, top, w, h = m["group"]["box"]
+    for j in range(12):
+        c = np.array([200 + (j * 37) % 50, 205 + (j * 23) % 45, 210 + (j * 11) % 40])
+        a = np.empty((6, 6, 3), np.uint8)
+        a[:] = c
+        a[:3, :3] = np.minimum(c + 6, 255)
+        ops.append(f"q {cm((x + (j % 4) * w / 4, top + (j // 4) * h / 3, w / 4, h / 3))} "
+                   f"BI /W 6 /H 6 /CS /RGB /BPC 8 /F /AHx ID\n{a.tobytes().hex()}>\nEI Q")
+    # A black label on each
+    ls = m["label_size"]
+    for key in ("repeated", "group"):
+        x, top, w, h = m[key]["label"]
+        ops.append(f"BT /F2 {ls} Tf 0 g {x + 2} {H - top - ls + 1:.2f} Td (Label) Tj ET")
+
+    content = stream("", "\n".join(ops).encode("latin-1"))
+    xo = " ".join(f"/{name} {num} 0 R" for name, num in xobjects.items())
+    fo = " ".join(f"/{name} {num} 0 R" for name, num in fonts.items())
+    objects[2] = (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {W} {H}] "
+                  f"/Resources << /Font << /F1 4 0 R /F2 5 0 R {fo} >> /XObject << {xo} >> >> "
+                  f"/Contents {content} 0 R >>").encode()
+    write_pdf(out, objects)
 
 
 def make_figure_pdf(src, out):
@@ -178,17 +424,17 @@ def make_chart_pdf(out):
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
+    make_chart_pdf(os.path.join(out, "chart.pdf"))
+    make_mixed_pdf(os.path.join(out, "mixed.pdf"))
     if "--chart-only" in sys.argv:
-        make_chart_pdf(os.path.join(out, "chart.pdf"))
-        print("wrote", os.path.join(out, "chart.pdf"))
+        print("wrote", os.path.join(out, "chart.pdf"), "and", os.path.join(out, "mixed.pdf"))
         return
     src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "example.pdf")
     shutil.copyfile(src, os.path.join(out, "paper.pdf"))
     width, height = make_figure_pdf(src, os.path.join(out, "figure.pdf"))
-    make_chart_pdf(os.path.join(out, "chart.pdf"))
     print("wrote", os.path.join(out, "paper.pdf"), ",", os.path.join(out, "figure.pdf"),
           f"(page {width:g} x {height:g} points, link to {LINK_URL} {LINK_BAND[0]}-{LINK_BAND[1]} points from the top)",
-          "and", os.path.join(out, "chart.pdf"))
+          ",", os.path.join(out, "chart.pdf"), "and", os.path.join(out, "mixed.pdf"))
 
 
 if __name__ == "__main__":

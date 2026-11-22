@@ -12,6 +12,12 @@
 #     colours stay as the PDF has them (tests/check_dark_page.py, on a page
 #     made by tests/make_test_pdfs.py, opened under a file name with spaces,
 #     #, &, % and an accented letter);
+#   - on a second page made there (tests/check_mixed_page.py): a scanned page
+#     stored as a picture of the paper with its letters as black stencils
+#     keeps dark letters on light paper; text stays readable on coloured
+#     boxes (a pale box turns dark and its text white; text on a strong
+#     colour keeps its colour); labels on pictures drawn many times over
+#     keep their colours;
 #   - a web link in the PDF opens in a new window;
 #   - Alt+Tab (Cmd+` on macOS) switches between the PDFs' windows;
 #   - F11 (Ctrl+Cmd+F on macOS) makes a window full screen, with a short note
@@ -193,6 +199,20 @@ jobs:
           python tests/find_bar_shown.py "$SHOTS/6-chart-page.png" "$SHOTS/6b-find.png" "$SHOTS/dark-page-${{ matrix.os }}.json"
           press 53
           sleep 1
+          press 13 command
+          wait_windows 2
+
+      - name: A scanned page, coloured boxes and labels on pictures - dark letters on their paper, readable text on every box
+        run: |
+          . tests/macos/reader-windows.sh
+          open -a "$HOME/Applications/Firefox PDF Reader.app" "$PDFS/mixed.pdf"
+          wait_windows 3 90
+          wait_title mixed.pdf
+          bring_front
+          echo "front: $(front_title)"; front_title | grep -q mixed.pdf
+          sleep 8   # page drawn
+          shot "$SHOTS/6c-mixed-page.png"
+          python tests/check_mixed_page.py "$SHOTS/6c-mixed-page.png" "$PDFS/mixed.pdf" "$SHOTS" --name mixed-page-${{ matrix.os }}
           press 13 command
           wait_windows 2
 
@@ -474,6 +494,21 @@ jobs:
           xdotool key ctrl+w
           wait_windows 2
 
+      - name: A scanned page, coloured boxes and labels on pictures - dark letters on their paper, readable text on every box
+        run: |
+          . tests/linux/reader-windows.sh
+          xdotool mousemove 5 500
+          gtk-launch firefox-pdf-reader "$PDFS/mixed.pdf"
+          wait_windows 3 90
+          wait_title mixed.pdf
+          sleep 2
+          echo "front: $(front_title)"; front_title | grep -q mixed.pdf
+          sleep 8   # page drawn
+          shot "$SHOTS/8b-mixed-page.png"
+          python tests/check_mixed_page.py "$SHOTS/8b-mixed-page.png" "$PDFS/mixed.pdf" "$SHOTS" --name mixed-page-ubuntu
+          xdotool key ctrl+w
+          wait_windows 2
+
       - name: Ctrl+W closes one PDF, Alt+F4 the other, and the reader ends
         run: |
           . tests/linux/reader-windows.sh
@@ -649,6 +684,17 @@ jobs:
           sleep 10   # page drawn
           shot /tmp/shots/4-chart-page.png
           python3 tests/check_dark_page.py /tmp/shots/4-chart-page.png /home/penguin/chart.pdf /tmp/shots --name dark-page-chromeos
+
+      - name: A scanned page, coloured boxes and labels on pictures - dark letters on their paper, readable text on every box
+        run: |
+          . tests/linux/reader-windows.sh
+          $AS_USER /home/penguin/.local/bin/firefox-pdf-reader /home/penguin/mixed.pdf > /tmp/firefox4.log 2>&1 &
+          wait_windows 4 90 || { cat /tmp/firefox4.log; exit 1; }
+          wait_title mixed.pdf
+          xdotool windowactivate --sync "$(window_id mixed.pdf)"
+          sleep 10   # page drawn
+          shot /tmp/shots/5-mixed-page.png
+          python3 tests/check_mixed_page.py /tmp/shots/5-mixed-page.png /home/penguin/mixed.pdf /tmp/shots --name mixed-page-chromeos
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -874,6 +920,25 @@ jobs:
           if ($LASTEXITCODE) { throw 'the find bar did not open' }
           Send-Keys Esc
           Start-Sleep 1
+          Send-Keys Ctrl, W
+          Wait-ReaderWindows 2 | Out-Null
+
+      - name: A scanned page, coloured boxes and labels on pictures - dark letters on their paper, readable text on every box
+        shell: pwsh
+        run: |
+          . .\tests\windows\reader-windows.ps1
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point 5, 400
+          Start-Process "$env:USERPROFILE\FirefoxPDF\FirefoxPDF.exe" -ArgumentList "`"$env:PDFS\mixed.pdf`""
+          Wait-ReaderWindows 3 90 | Out-Null
+          for ($i = 0; $i -lt 60 -and -not (@(Get-ReaderWindows).Title -match 'mixed\.pdf'); $i++) { Start-Sleep 1 }
+          Start-Sleep 2
+          $mixed = Get-ReaderWindows | Where-Object Title -match 'mixed\.pdf'
+          if (-not $mixed.Front) { Set-Front $mixed }
+          Get-ReaderWindows | Format-Table Title, Front, Maximised -AutoSize | Out-String | Write-Host
+          Start-Sleep 8   # page drawn
+          Save-Screen "$env:SHOTS\8b-mixed-page.png"
+          python tests/check_mixed_page.py "$env:SHOTS\8b-mixed-page.png" "$env:PDFS\mixed.pdf" "$env:SHOTS" --name mixed-page-windows
+          if ($LASTEXITCODE) { throw 'the scanned page, boxes and labels check missed' }
           Send-Keys Ctrl, W
           Wait-ReaderWindows 2 | Out-Null
 
