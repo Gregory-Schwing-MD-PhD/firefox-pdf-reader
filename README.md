@@ -85,7 +85,7 @@ Good to know:
 - A window's title is the PDF's file name; on Windows and Linux the system adds Firefox's name after it, as in "paper.pdf — Mozilla Firefox". If the PDF has a title of its own, that comes first, then the file name.
 - A web link in a PDF opens in a new window; close it (Ctrl+W, Cmd+W) to get back to the PDF. A PDF opened from a web link shows in Firefox's own viewer, in the PDF's own colours.
 - Find (Ctrl+F, Cmd+F) opens a small find bar at the top right of the window.
-- Printing prints the PDF's own colours: white paper, black text.
+- Printing gives the PDF's own colours, white paper and black text: the reader's viewer leaves its page colours out when it prepares pages for printing. Printing hasn't been tried on the test machines.
 
 ## Colours
 
