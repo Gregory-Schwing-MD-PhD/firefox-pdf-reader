@@ -7,8 +7,14 @@
  *
  * In full screen Firefox itself keeps its bar out of sight and slides it down
  * when the mouse touches the top edge of the screen; the buttons at its right
- * end leave full screen or close the window. */
+ * end leave full screen or close the window. That bar shows the PDF's name
+ * (its tab) and those buttons, but not the address bar, which would only show
+ * the long address of the reader's viewer. */
 :root:not([inFullscreen]) #navigator-toolbox {
+  visibility: collapse !important;
+}
+
+:root[inFullscreen] #nav-bar {
   visibility: collapse !important;
 }
 
