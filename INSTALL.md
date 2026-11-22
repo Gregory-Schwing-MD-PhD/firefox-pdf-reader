@@ -11,11 +11,15 @@ Most people should use the one-step installer at **https://gregory-schwing-md-ph
 
 Every push runs [the test workflow](.github/workflows/test.yml) on GitHub Actions. For each platform it:
 
-1. runs the installer
+1. runs the installer (on Ubuntu, over an install of the earlier kiosk-mode version, to test updating)
 2. checks the reader is registered, and is the default PDF app where the OS allows a script to set that
-3. opens a test PDF and confirms Firefox started full screen with the reader's settings
-4. saves a screenshot, which you can download from the run's **Artifacts**
-5. uninstalls
+3. checks the reader's profile files and the settings Firefox loaded
+4. opens a PDF like a double-click, then a second PDF, and checks that each gets its own window of the one running reader, titled with its file name and filling the screen, as the system's own window list shows them
+5. compares the colours and sharpness of a colour figure on screen with poppler's drawing of the same page ([`tests/compare_colours.py`](tests/compare_colours.py))
+6. clicks a web link in the PDF and checks it opens in a new window
+7. switches between the two windows with Alt+Tab (Cmd+` on macOS), makes one full screen with F11 (Ctrl+Cmd+F) and takes it back with F11 (Esc), then closes both
+8. saves a screenshot of every step, and the colour comparison, which you can download from the run's **Artifacts**
+9. uninstalls
 
 GitHub can't run ChromeOS itself, so a real Chromebook hasn't been tried.
 
@@ -42,19 +46,21 @@ The script does the following:
 
 1. Creates the Firefox profile at `%USERPROFILE%\FirefoxPDF`.
 2. Compiles [`windows/launcher/FirefoxPDF.cs`](windows/launcher/FirefoxPDF.cs) into `FirefoxPDF.exe` in that folder, using the C# compiler built into Windows.
-3. Registers **Firefox PDF Reader (full screen)** as a PDF app.
+3. Registers **Firefox PDF Reader** as a PDF app.
 4. Opens **Settings → Apps → Default apps**.
 
 **Make it the default (by hand, because Windows requires it):**
 
 1. Type `.pdf` in **Set a default for a file type or link type**.
 2. Click the app currently shown.
-3. Pick **Firefox PDF Reader (full screen)** and click **Set default**.
+3. Pick **Firefox PDF Reader** and click **Set default**.
 
 **Keys:**
-- **Alt+F4** closes the reader (Esc doesn't exit kiosk mode).
-- **Ctrl+Tab** switches between PDFs.
-- **Ctrl+W** closes one.
+- **F11** makes a PDF full screen; **F11** again leaves full screen (Esc doesn't, on Windows).
+- **Alt+Tab** switches between PDFs: each has its own window.
+- **Ctrl+W** closes a PDF; **Alt+F4** closes its window.
+
+**Update:** run the same command again. If the reader is already your default PDF app, the Settings page doesn't open.
 
 **Uninstall:**
 
@@ -75,7 +81,7 @@ The script does the following:
 1. Builds **Firefox PDF Reader.app** in `~/Applications`, using [`macos/build-app.sh`](macos/build-app.sh). This is the same app as in the `.dmg`: a small AppleScript app with Firefox's icon that carries the reader's settings inside it.
 2. Runs the app's setup, which creates the profile in `~/Library/Application Support/FirefoxPDF` and sets the app as the default app for PDFs.
 
-The app refreshes the profile's settings every time it starts, so updating the app updates the reader.
+The app refreshes the profile's settings every time it starts, so updating the app updates the reader: run `bash ./macos/install.sh` again, or drag the new app from the `.dmg` into Applications.
 
 **Building the disk image:** `bash ./macos/build-dmg.sh dist` makes `dist/FirefoxPDFReader.dmg`.
 - **Default:** the app is signed ad hoc, so macOS asks people to allow it the first time (**System Settings → Privacy & Security → Open Anyway**).
@@ -90,9 +96,9 @@ If the default didn't take, set it by hand:
 3. Click **Change All…**.
 
 **Keys:**
-- **Cmd+Q** closes the reader.
-- **Ctrl+Tab** switches between PDFs.
-- **Cmd+W** closes one.
+- **Ctrl+Cmd+F** makes a PDF full screen (a space of its own); **Esc** leaves full screen.
+- **Cmd+`** switches between the reader's windows that aren't full screen; **Cmd+Tab** switches apps.
+- **Cmd+W** closes a PDF; **Cmd+Q** closes the reader.
 
 **Uninstall:**
 
@@ -123,7 +129,7 @@ The script does the following:
 3. Installs the launcher `~/.local/bin/firefox-pdf-reader` and the desktop entry `firefox-pdf-reader.desktop`.
 4. Sets it as the default for `application/pdf` with `xdg-mime`.
 
-It works on GNOME, KDE Plasma, Xfce, Cinnamon and other freedesktop.org desktops.
+It works on GNOME, KDE Plasma, Xfce, Cinnamon and other freedesktop.org desktops. Run it again to update an installed reader.
 
 **Profile location by install type:**
 
@@ -136,9 +142,11 @@ It works on GNOME, KDE Plasma, Xfce, Cinnamon and other freedesktop.org desktops
 On Flatpak, PDFs from anywhere are passed in through the document portal.
 
 **Keys:**
-- **Alt+F4** closes the reader.
-- **Ctrl+Tab** switches between PDFs.
-- **Ctrl+W** closes one.
+- **F11** makes a PDF full screen; **F11** again leaves full screen (Esc doesn't, on Linux).
+- **Alt+Tab** switches between PDFs: each has its own window. On GNOME, Alt+Tab groups windows by app: hold Alt and press **`** (the key above Tab) to step through the reader's windows.
+- **Ctrl+W** closes a PDF; **Alt+F4** closes its window.
+
+A second PDF goes to the running reader over the desktop's session bus (D-Bus), which Linux desktops and ChromeOS's Linux have.
 
 **Uninstall:**
 
@@ -159,7 +167,7 @@ sh ./linux/uninstall.sh --remove-profile
 - **For each user:** the first time a user opens it, it makes itself their default too.
 - **Choices kept:** a user who already picked a default PDF app keeps it until they choose **Firefox PDF Reader** under **Open With**.
 
-It depends on `firefox-esr | firefox`, so installing it brings Firefox along if needed. Remove it with `sudo apt remove firefox-pdf-reader`.
+It depends on `firefox-esr | firefox`, so installing it brings Firefox along if needed. Installing a newer `.deb` updates it. Remove it with `sudo apt remove firefox-pdf-reader`.
 
 ## ChromeOS (Chromebooks)
 
@@ -200,14 +208,19 @@ Every platform uses the same Firefox settings in [`profile/`](profile/). Only th
 
 | Behaviour | Where it's set |
 | --- | --- |
-| Full screen, no browser UI | The launcher starts Firefox with `--kiosk` |
+| Each PDF in its own window | The launcher passes each PDF with `-new-window`; a second PDF goes to the running reader |
+| A window filling the screen | Before each start the launcher writes Firefox's saved window state, `xulstore.json`, with `"sizemode": "maximized"` |
+| No tabs, address bar or sidebar; the system's title bar | [`chrome/userChrome.css`](profile/chrome/userChrome.css), and `browser.tabs.inTitlebar = 0` in [`user.js`](profile/user.js) |
+| Full screen on F11, Firefox's bar at the top edge | Firefox's own full screen, with `browser.fullscreen.autohide` |
+| The note on how to leave full screen | [`chrome/userContent.css`](profile/chrome/userContent.css), shown while `display-mode: fullscreen` |
 | Separate from your normal Firefox | The launcher starts Firefox with `-profile <its own folder>` |
-| Page width | `pdfjs.defaultZoomValue = "page-width"` in [`user.js`](profile/user.js) |
+| Page width | `pdfjs.defaultZoomValue = "page-width"` |
 | Vertical scrolling, no spreads | `pdfjs.scrollModeOnLoad = 0`, `pdfjs.spreadModeOnLoad = 0` |
 | Sidebar closed | `pdfjs.sidebarViewOnLoad = 0` |
-| Dark viewer | `pdfjs.viewerCssTheme = 2` |
-| Dark pages | `pdfjs.forcePageColors` with `pageColorsBackground` / `pageColorsForeground` |
-| Toolbar hidden | [`chrome/userContent.css`](profile/chrome/userContent.css), enabled by `toolkit.legacyUserProfileCustomizations.stylesheets` |
+| Dark viewer around the pages | `pdfjs.viewerCssTheme = 2` |
+| Pages and pictures in their own colours | `pdfjs.forcePageColors = false` (Firefox's default, written out so an earlier install that recoloured pages gets it back) |
+| PDF toolbar hidden | [`chrome/userContent.css`](profile/chrome/userContent.css); both style sheets are enabled by `toolkit.legacyUserProfileCustomizations.stylesheets` |
+| Web links open in a new window | `pdfjs.externalLinkTarget = 2`, `browser.link.open_newwindow = 2` |
 | Smooth scrolling | `general.smoothScroll` on, with Firefox's easing left at defaults so it doesn't fight the mouse's own smooth scrolling |
 | GPU rendering | `pdfjs.enableHWA`, `gfx.webrender.all` |
 
@@ -222,6 +235,12 @@ The launcher is different on each platform:
 Firefox remembers the zoom and reading position for each PDF.
 
 To change colours or behaviour, edit the files in `profile/` and run the installer again. Firefox applies `user.js` each time the reader starts.
+
+## Updating
+
+Install again the same way you installed; nothing needs removing first. The Windows and Linux scripts copy the new profile files and launcher; the Mac app and the `.deb` launcher copy the profile files from themselves every time they start, so a new app or package is the whole update. Close the reader's windows first: the next PDF you open uses the new version.
+
+An install from before this change opened PDFs in kiosk mode and recoloured every page. Its launcher is replaced, and the new `user.js` sets `pdfjs.forcePageColors` back to `false`: Firefox keeps a changed setting in the profile until something sets it again, so leaving the line out would not be enough. The Ubuntu test starts from such an install and checks this.
 
 ## Alternatives that were tried (Windows)
 

@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reader demo · Firefox PDF Reader</title>
-<meta name="description" content="Try Firefox PDF Reader in your browser: dark, full screen, continuous scrolling, nothing but the PDF.">
+<meta name="description" content="Try Firefox PDF Reader in your browser: continuous scrolling, nothing but the PDF, pictures in their own colours.">
 <style>
   :root {
     --bg: #131215;
-    --page-bg: #1a1a1a;
+    --page-bg: #fff;
     --page-fg: #dcdcdc;
     --muted: #8b8a91;
     --accent: #8f7bff;
@@ -53,7 +53,6 @@
   const pagesEl = document.getElementById('pages');
   const status = document.getElementById('status');
   const MARGIN = 20;                         // side margin, like the reader at page width
-  const COLORS = { background: '#1a1a1a', foreground: '#dcdcdc' };   // same as user.js
   const storeKey = 'fpr-demo-pos:' + url;
 
   let pdf;
@@ -96,7 +95,8 @@
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(vp.width);
     canvas.height = Math.floor(vp.height);
-    p.task = p.page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, pageColors: COLORS });
+    // Pages in their own colours, like the reader (no recolouring)
+    p.task = p.page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
     try {
       await p.task.promise;
       p.div.replaceChildren(canvas);

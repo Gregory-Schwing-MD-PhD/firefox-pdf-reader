@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Firefox PDF Reader</title>
-<meta name="description" content="A dark, full-screen, distraction-free PDF reader built on Firefox. One-step install for Windows, macOS, Linux and ChromeOS.">
+<meta name="description" content="A distraction-free PDF reader built on Firefox: each PDF in its own window, pictures in their own colours, full screen on F11. One-step install for Windows, macOS, Linux and ChromeOS.">
 <style>
   :root {
     --bg: #131215;
@@ -57,7 +57,7 @@
 <body>
 <main>
   <h1>Firefox PDF Reader</h1>
-  <p class="lede">Dark, full-screen, distraction-free PDF reading. Double-click a PDF and you get the pages, scrolling smoothly, and nothing else.</p>
+  <p class="lede">Distraction-free PDF reading. Double-click a PDF and you get its pages in a window of their own, scrolling smoothly, with pictures in their own colours, and nothing else.</p>
 
   <section class="card" id="install" aria-labelledby="install-title">
     <h2 id="install-title" style="margin-top:0">Install</h2>
@@ -75,8 +75,9 @@
 
   <h2>Features</h2>
   <ul class="features">
-    <li><b>Dark</b><span>Dark viewer, and pages recoloured to light grey on near-black.</span></li>
-    <li><b>Full screen</b><span>Opens straight into full screen, with no tabs, address bar or menus.</span></li>
+    <li><b>Pictures in their own colours</b><span>Pages and figures keep the colours they were made with, drawn sharp; only the space around the pages is dark.</span></li>
+    <li><b>One window per PDF</b><span>Each PDF opens in a window of its own, named after its file; Alt+Tab (Cmd+` on a Mac) switches between them.</span></li>
+    <li><b>Full screen, with a way out</b><span>Windows open filling the screen with no tabs, address bar or menus. F11 makes one full screen and F11 again leaves (Ctrl+Cmd+F and Esc on a Mac).</span></li>
     <li><b>Nothing but the PDF</b><span>No toolbar, sidebar or notice bars.</span></li>
     <li><b>Continuous</b><span>One long vertical scroll through every page, fit to the page width.</span></li>
     <li><b>Remembers your spot</b><span>Reopen a PDF where you left off, at the same zoom.</span></li>
@@ -108,7 +109,7 @@
       html: `<a class="btn" href="install/FirefoxPDFReader-Setup.cmd" download>Download for Windows</a>
         <ol class="steps">
           <li>Open the downloaded <b>FirefoxPDFReader-Setup.cmd</b>. If Windows warns about it, choose <b>More info → Run anyway</b>.</li>
-          <li>When Settings opens, type <b>.pdf</b>, click the current app and choose <b>Firefox PDF Reader (full screen)</b>.</li>
+          <li>When Settings opens, type <b>.pdf</b>, click the current app and choose <b>Firefox PDF Reader</b>.</li>
         </ol>
         <p class="note">Or paste this into PowerShell:</p>${cmd(PS)}`
     },
