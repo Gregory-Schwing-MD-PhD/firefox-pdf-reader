@@ -56,6 +56,35 @@ function readerColor(graphics, color) {
   const v = Math.round(255 * MathClamp((255 - (max + min) / 2) / (255 - READER_DARK), 0, 1));
   return Util.makeHexColor(v, v, v);
 }
+// Text, lines and fills drawn on top of a picture (labels and arrows on an
+// X-ray, dark text on a light photograph) keep their own colours, as the
+// picture under them does. readerPicture() notes where each picture is drawn
+// on the page; readerKeepColours() gives a shape or line of text whose box
+// lies inside one its own colours, and returns the colours to put back after.
+function readerPicture(graphics) {
+  if (graphics.pageColors) {
+    const box = BBOX_INIT.slice();
+    Util.axialAlignedBoundingBox([0, 0, 1, 1], getCurrentTransform(graphics.ctx), box);
+    (graphics.readerPictures ||= []).push({ ctx: graphics.ctx, box });
+  }
+}
+function readerKeepColours(graphics, box) {
+  const { ctx, current } = graphics;
+  const onPicture = graphics.readerPictures?.some(p => p.ctx === ctx &&
+    box[0] >= p.box[0] - 1 && box[1] >= p.box[1] - 1 && box[2] <= p.box[2] + 1 && box[3] <= p.box[3] + 1);
+  if (!onPicture || graphics.smaskStack.length > 0) {
+    return null;
+  }
+  const saved = [ctx, ctx.fillStyle, ctx.strokeStyle];
+  const own = color => current.transferMapsFallback?.applyToColor(color) ?? color;
+  if (!current.patternFill && typeof current.fillColor === "string") {
+    ctx.fillStyle = own(current.fillColor);
+  }
+  if (!current.patternStroke && typeof current.strokeColor === "string") {
+    ctx.strokeStyle = own(current.strokeColor);
+  }
+  return saved;
+}
 '''
 
 # (file, the release's text, the reader's text)
@@ -87,6 +116,29 @@ PATCHES = [
     ("build/pdf.mjs",
      "        }, undefined, undefined, this.dependencyTracker ? new CanvasNestedDependencyTracker(",
      "        }, undefined, this.pageColors /* Firefox PDF Reader */, this.dependencyTracker ? new CanvasNestedDependencyTracker("),
+    # Where a picture is drawn (in its unit square, before it is scaled to its pixels).
+    ("build/pdf.mjs",
+     "    ctx.scale(1 / width, -1 / height);\n    let imgToPaint;\n",
+     "    readerPicture(this); // Firefox PDF Reader\n    ctx.scale(1 / width, -1 / height);\n    let imgToPaint;\n"),
+    # A shape (its box on the page is this.current.minMax) on a picture.
+    ("build/pdf.mjs",
+     "        this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);\n      }\n    }\n"
+     "    this[op](opIdx, path);\n    this._pathStartIdx = opIdx;\n",
+     "        this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);\n      }\n    }\n"
+     "    const readerSaved = readerKeepColours(this, this.current.minMax); // Firefox PDF Reader\n"
+     "    this[op](opIdx, path);\n"
+     "    if (readerSaved) {\n      [readerSaved[0].fillStyle, readerSaved[0].strokeStyle] = readerSaved.slice(1);\n    }\n"
+     "    this._pathStartIdx = opIdx;\n"),
+    # A line of text on a picture: the point a third of the font size above
+    # where it starts. (showText's own ctx.restore() puts the colours back.)
+    ("build/pdf.mjs",
+     "    ctx.translate(current.x, current.y + current.textRise);\n    if (fontDirection > 0) {\n      ctx.scale(textHScale, -1);\n",
+     "    ctx.translate(current.x, current.y + current.textRise);\n"
+     "    { // Firefox PDF Reader\n"
+     "      const p = [0, fontSize / 3];\n"
+     "      Util.applyTransform(p, getCurrentTransform(ctx));\n"
+     "      readerKeepColours(this, [p[0], p[1], p[0], p[1]]);\n    }\n"
+     "    if (fontDirection > 0) {\n      ctx.scale(textHScale, -1);\n"),
     # The reader's settings (reader.mjs), read just before the viewer starts.
     ("web/viewer.html",
      '  <script src="viewer.mjs" type="module"></script>\n',
@@ -109,7 +161,8 @@ Firefox PDF Reader changed it with tools/make_viewer.py in its repository
 (https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader):
 - left out: the source maps (*.map) and the sample PDF;
 - build/pdf.mjs: {sum(1 for p in PATCHES if p[0] == "build/pdf.mjs")} changes, each marked "Firefox PDF Reader": pages are drawn
-  black with white text, and pictures in their own colours;
+  black with white text, pictures in their own colours, and text and lines
+  drawn on a picture in their own colours;
 - web/viewer.html: reads the reader's settings, web/reader.mjs, before the
   viewer starts;
 - added: web/reader.mjs (the reader's settings, MIT License), NOTICE and

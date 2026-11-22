@@ -13,7 +13,9 @@ Usage: python tests/make_test_pdfs.py OUTDIR [--chart-only]
   OUTDIR/chart.pdf   a page made here, from nothing but this script: a
                      heading and lines of text (black, dark grey and the
                      CMYK black printers use), a greyscale photograph-like
-                     picture with a grey step wedge, and a bar chart drawn
+                     picture with a grey step wedge and, drawn on top of it,
+                     a white label and arrow and a black label (as on an
+                     X-ray in a paper), and a bar chart drawn
                      with lines and fills (coloured bars, black axes, light
                      grey grid lines). Its layout is CHART below, in points
                      from the page's top left corner; tests/check_dark_page.py
@@ -50,6 +52,10 @@ CHART = {
     "text_size": 11,
     # The greyscale picture: its box on the page, and its size in pixels
     "picture": {"x": 72, "top": 126, "width": 216, "height": 162, "pixels": (432, 324)},
+    # Drawn on the picture: (x, top, size, grey, text), points from the
+    # page's top left; and a white arrow from (x, top) to (x, top)
+    "picture_labels": [(80, 134, 16, 1.0, "A"), (204, 216, 16, 0.0, "B")],
+    "picture_arrow": ((104, 140), (150, 170)),
     # The bar chart: the box its axes span, its bars and their colours
     "chart": {"x": 336, "top": 126, "width": 204, "height": 150,
               "bars": [(0.10, 0.62, (31, 119, 180)),     # (left, height, RGB): blue
@@ -114,6 +120,12 @@ def make_chart_pdf(out):
     # The picture
     p = c["picture"]
     ops.append(f"q {p['width']} 0 0 {p['height']} {p['x']} {H - p['top'] - p['height']} cm /Im1 Do Q")
+    # Labels and an arrow drawn on the picture
+    for x, top, size, grey, text in c["picture_labels"]:
+        ops.append(f"BT /F2 {size} Tf {grey} g {x} {H - top - size:.2f} Td ({pdf_text(text)}) Tj ET")
+    (ax0, at0), (ax1, at1) = c["picture_arrow"]
+    ops.append(f"q 1 G 1 g 2 w {ax0} {H - at0} m {ax1 - 6} {H - at1 + 4} l S "
+               f"{ax1} {H - at1} m {ax1 - 11} {H - at1 + 2} l {ax1 - 6} {H - at1 + 9} l h f Q")
     # The chart: grid lines, bars, then axes on top
     ch = c["chart"]
     x0, y0 = ch["x"], H - ch["top"] - ch["height"]        # the axes' corner (bottom left)

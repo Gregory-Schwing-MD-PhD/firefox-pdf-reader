@@ -9909,6 +9909,35 @@ function readerColor(graphics, color) {
   const v = Math.round(255 * MathClamp((255 - (max + min) / 2) / (255 - READER_DARK), 0, 1));
   return Util.makeHexColor(v, v, v);
 }
+// Text, lines and fills drawn on top of a picture (labels and arrows on an
+// X-ray, dark text on a light photograph) keep their own colours, as the
+// picture under them does. readerPicture() notes where each picture is drawn
+// on the page; readerKeepColours() gives a shape or line of text whose box
+// lies inside one its own colours, and returns the colours to put back after.
+function readerPicture(graphics) {
+  if (graphics.pageColors) {
+    const box = BBOX_INIT.slice();
+    Util.axialAlignedBoundingBox([0, 0, 1, 1], getCurrentTransform(graphics.ctx), box);
+    (graphics.readerPictures ||= []).push({ ctx: graphics.ctx, box });
+  }
+}
+function readerKeepColours(graphics, box) {
+  const { ctx, current } = graphics;
+  const onPicture = graphics.readerPictures?.some(p => p.ctx === ctx &&
+    box[0] >= p.box[0] - 1 && box[1] >= p.box[1] - 1 && box[2] <= p.box[2] + 1 && box[3] <= p.box[3] + 1);
+  if (!onPicture || graphics.smaskStack.length > 0) {
+    return null;
+  }
+  const saved = [ctx, ctx.fillStyle, ctx.strokeStyle];
+  const own = color => current.transferMapsFallback?.applyToColor(color) ?? color;
+  if (!current.patternFill && typeof current.fillColor === "string") {
+    ctx.fillStyle = own(current.fillColor);
+  }
+  if (!current.patternStroke && typeof current.strokeColor === "string") {
+    ctx.strokeStyle = own(current.strokeColor);
+  }
+  return saved;
+}
 class CanvasGraphics {
   static #SCALE_MATRIX = null;
   static #pathCaches = new WeakMap();
@@ -10919,7 +10948,11 @@ class CanvasGraphics {
         this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);
       }
     }
+    const readerSaved = readerKeepColours(this, this.current.minMax); // Firefox PDF Reader
     this[op](opIdx, path);
+    if (readerSaved) {
+      [readerSaved[0].fillStyle, readerSaved[0].strokeStyle] = readerSaved.slice(1);
+    }
     this._pathStartIdx = opIdx;
   }
   closePath(opIdx) {
@@ -11312,6 +11345,11 @@ class CanvasGraphics {
       ctx.transform(...current.textMatrix);
     }
     ctx.translate(current.x, current.y + current.textRise);
+    { // Firefox PDF Reader
+      const p = [0, fontSize / 3];
+      Util.applyTransform(p, getCurrentTransform(ctx));
+      readerKeepColours(this, [p[0], p[1], p[0], p[1]]);
+    }
     if (fontDirection > 0) {
       ctx.scale(textHScale, -1);
     } else {
@@ -12143,6 +12181,7 @@ class CanvasGraphics {
     if (filter !== "none" && filter !== "") {
       ctx.filter = "none";
     }
+    readerPicture(this); // Firefox PDF Reader
     ctx.scale(1 / width, -1 / height);
     let imgToPaint;
     let inlineImgCanvas = null;

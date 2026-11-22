@@ -9,8 +9,9 @@ folders that hold them (web/cmaps, web/standard_fonts, web/iccs, web/wasm).
 Firefox PDF Reader changed it with tools/make_viewer.py in its repository
 (https://github.com/Gregory-Schwing-MD-PhD/firefox-pdf-reader):
 - left out: the source maps (*.map) and the sample PDF;
-- build/pdf.mjs: 6 changes, each marked "Firefox PDF Reader": pages are drawn
-  black with white text, and pictures in their own colours;
+- build/pdf.mjs: 9 changes, each marked "Firefox PDF Reader": pages are drawn
+  black with white text, pictures in their own colours, and text and lines
+  drawn on a picture in their own colours;
 - web/viewer.html: reads the reader's settings, web/reader.mjs, before the
   viewer starts;
 - added: web/reader.mjs (the reader's settings, MIT License), NOTICE and
