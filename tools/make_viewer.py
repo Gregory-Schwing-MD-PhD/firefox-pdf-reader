@@ -33,37 +33,44 @@ READER_COLOR = '''\
 // When the viewer asks for page colours ("pageColors": the reader's viewer
 // does on screen, never when printing), pdf.js would draw the finished page
 // through one filter that turns every colour, pictures included, into shades
-// between two colours. Instead, only the plain greys that text, lines and
-// fills are drawn with change: a grey becomes its opposite (white becomes
-// black; black and dark grey become white) and every other colour stays as
-// the PDF has it. Pictures (images) never come here: they are drawn exactly as
-// decoded. Inside a soft mask nothing changes: there a grey says how much
-// shows through, not what colour it is.
+// between two colours. Instead, only the colours that text, lines and fills
+// are drawn with change, and of those only greys and very pale colours (a
+// pale blue table cell, a cream page): they become their opposite in
+// lightness and keep any tint they have. White becomes black, a pale blue a
+// dark blue, and black and dark grey become white. Every other colour stays
+// as the PDF has it. Pictures (images) never come here: they are drawn
+// exactly as decoded. Inside a soft mask nothing changes: there a grey says
+// how much shows through, not what colour it is.
 const READER_GREY = 24; // a colour whose channels (0-255) differ by at most this is a grey
+const READER_PALE = 192; // a colour whose channels are all at least this is very pale
 const READER_DARK = 51; // greys this dark (#333333) or darker become pure white
 function readerColor(graphics, color) {
   if (!graphics.pageColors || graphics.smaskStack.length > 0 || typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) {
     return color;
   }
-  const r = parseInt(color.slice(1, 3), 16),
-    g = parseInt(color.slice(3, 5), 16),
-    b = parseInt(color.slice(5, 7), 16);
-  const max = Math.max(r, g, b),
-    min = Math.min(r, g, b);
-  if (max - min > READER_GREY) {
+  const rgb = [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16));
+  const max = Math.max(...rgb),
+    min = Math.min(...rgb);
+  if (max - min > READER_GREY && min < READER_PALE) {
     return color;
   }
-  const v = Math.round(255 * MathClamp((255 - (max + min) / 2) / (255 - READER_DARK), 0, 1));
-  return Util.makeHexColor(v, v, v);
+  const mid = (max + min) / 2;
+  const v = 255 * MathClamp((255 - mid) / (255 - READER_DARK), 0, 1);
+  return Util.makeHexColor(...rgb.map(c => Math.round(MathClamp(v + c - mid, 0, 255))));
 }
 // Text, lines and stencils (one-colour bitmaps, such as the letters of many
-// scanned pages) drawn on top of a picture keep their own colours, as the
-// picture under them does: labels and arrows on an X-ray, dark text on a
-// light photograph, the letters of a scan stored as a picture of the paper
-// with the letters on top. readerArea() notes, in drawing order, where each
-// picture is drawn on the page; readerKeeps() says whether a box (a shape's,
-// a stencil's, or the point where a line of text starts) lies on one.
+// scanned pages) drawn on top of a picture, or on a fill whose colour stayed
+// as the PDF has it, keep their own colours too, so they read as on paper:
+// labels on an X-ray, the letters of a scan stored as a picture of the paper
+// with the letters on top, black text on a yellow box, white text on a dark
+// blue one. readerArea() notes, in drawing order, where each picture and each
+// fill is drawn on the page; readerKeeps() looks at the last one drawn under
+// a box (a shape's, a stencil's, or the point where a line of text starts)
+// and says whether that one kept its colours. So a white box drawn on the
+// page turns black and the text on it white, while a white box drawn on a
+// picture or a kept colour stays white and the text on it black.
 const READER_CELL = 128; // the areas are listed by the squares of this many pixels they touch
+let readerHitContext = null;
 function readerUnitBox(m) {
   const box = BBOX_INIT.slice();
   Util.axialAlignedBoundingBox([0, 0, 1, 1], m, box);
@@ -74,12 +81,12 @@ function readerCells(ctx, box) {
   const cell = v => MathClamp(Math.floor(v / READER_CELL), 0, n);
   return [cell(box[0]), cell(box[1]), cell(box[2]), cell(box[3]), n + 1];
 }
-function readerArea(graphics, box, keep) {
+function readerArea(graphics, box, keep, path = null, evenOdd = false) {
   if (!graphics.pageColors || graphics.smaskStack.length > 0 || !box || !(box[0] <= box[2] && box[1] <= box[3])) {
     return;
   }
   const { ctx } = graphics;
-  const area = { box: Array.from(box), keep };
+  const area = { box: Array.from(box), keep, path, evenOdd, transform: path && getCurrentTransform(ctx) };
   graphics.readerAreas ||= new Map();
   let cells = graphics.readerAreas.get(ctx);
   if (!cells) {
@@ -101,6 +108,23 @@ function readerArea(graphics, box, keep) {
 function readerPicture(graphics) {
   readerArea(graphics, readerUnitBox(getCurrentTransform(graphics.ctx)), true);
 }
+function readerFill(graphics, box, kept, path = null, evenOdd = false) {
+  const { current, ctx } = graphics;
+  if (current.fillAlpha < 1 || ctx.globalCompositeOperation !== "source-over") {
+    return;
+  }
+  let keep = kept;
+  if (!keep && current.patternFill) {
+    keep = !(current.fillColor instanceof TilingPattern);
+  } else if (!keep) {
+    const color = current.transferMapsFallback?.applyToColor(current.fillColor) ?? current.fillColor;
+    if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) {
+      return;
+    }
+    keep = readerColor(graphics, color) === color;
+  }
+  readerArea(graphics, box, keep, path, evenOdd);
+}
 function readerKeeps(graphics, box) {
   const { ctx } = graphics;
   const cells = graphics.readerAreas?.get(ctx);
@@ -115,6 +139,13 @@ function readerKeeps(graphics, box) {
     const a = list[i];
     if (box[0] < a.box[0] - 1 || box[1] < a.box[1] - 1 || box[2] > a.box[2] + 1 || box[3] > a.box[3] + 1) {
       continue;
+    }
+    if (a.path) {
+      readerHitContext ||= new OffscreenCanvas(1, 1).getContext("2d");
+      readerHitContext.setTransform(...a.transform);
+      if (!readerHitContext.isPointInPath(a.path, x, y, a.evenOdd ? "evenodd" : "nonzero")) {
+        continue;
+      }
     }
     return a.keep;
   }
@@ -184,7 +215,8 @@ PATCHES = [
     ("build/pdf.mjs",
      "    ctx.scale(1 / width, -1 / height);\n    let imgToPaint;\n",
      "    readerPicture(this); // Firefox PDF Reader\n    ctx.scale(1 / width, -1 / height);\n    let imgToPaint;\n"),
-    # A shape (its box on the page is this.current.minMax) on a picture.
+    # A shape (its box on the page is this.current.minMax) on a picture or a
+    # kept colour; and a fill, noted for what is drawn on it later.
     ("build/pdf.mjs",
      "        this.current.fillColor.updatePatternDims(clippedBBox, tilingDims);\n      }\n    }\n"
      "    this[op](opIdx, path);\n    this._pathStartIdx = opIdx;\n",
@@ -192,13 +224,19 @@ PATCHES = [
      "    // Firefox PDF Reader: readerKeepColours(). A Type3 letter drawn with a stencil comes here as an\n"
      "    // outline (rawFillPath) in its unit square, whose minMax pdf.js gives in the stencil's pixels.\n"
      "    const readerSaved = readerKeepColours(this, op === OPS.rawFillPath ? readerUnitBox(getCurrentTransform(this.ctx)) : this.current.minMax);\n"
+     "    const readerBox = this.current.getClippedPathBoundingBox();\n"
      "    this[op](opIdx, path);\n"
      "    readerPutBack(readerSaved);\n"
+     "    if (op === OPS.fill || op === OPS.eoFill || op === OPS.fillStroke || op === OPS.eoFillStroke ||\n"
+     "        op === OPS.closeFillStroke || op === OPS.closeEOFillStroke) {\n"
+     "      readerFill(this, readerBox, readerSaved !== null, path,\n"
+     "        op === OPS.eoFill || op === OPS.eoFillStroke || op === OPS.closeEOFillStroke);\n"
+     "    }\n"
      "    this._pathStartIdx = opIdx;\n"),
-    # A line of text on a picture: the point a third of the font size above
-    # where it starts. (showText's own ctx.restore() puts the colours back.)
-    # Text in a Type3 font is drawn by shapes and stencils, which decide for
-    # themselves.
+    # A line of text on a picture or a kept colour: the point a third of the
+    # font size above where it starts. (showText's own ctx.restore() puts the
+    # colours back.) Text in a Type3 font is drawn by shapes and stencils,
+    # which decide for themselves.
     ("build/pdf.mjs",
      "    ctx.translate(current.x, current.y + current.textRise);\n    if (fontDirection > 0) {\n      ctx.scale(textHScale, -1);\n",
      "    ctx.translate(current.x, current.y + current.textRise);\n"
@@ -212,14 +250,14 @@ PATCHES = [
      "      ctx.transform(...entry.transform);\n      ctx.scale(1, -1);\n      drawImageAtIntegerCoords(ctx, imgToPaint,",
      "      ctx.transform(...entry.transform);\n      readerPicture(this); // Firefox PDF Reader\n"
      "      ctx.scale(1, -1);\n      drawImageAtIntegerCoords(ctx, imgToPaint,"),
-    # A stencil (image mask) on a picture is filled with its own colour.
+    # A stencil (image mask) on a picture or a kept colour is filled with its own colour.
     ("build/pdf.mjs",
      "    const mask = this._createMaskCanvas(opIdx, img);\n    const maskCanvas = mask.canvas;\n",
      "    const readerSaved = readerKeepColours(this, readerUnitBox(getCurrentTransform(ctx))); // Firefox PDF Reader\n"
      "    const mask = this._createMaskCanvas(opIdx, img);\n    readerPutBack(readerSaved);\n"
      "    const maskCanvas = mask.canvas;\n"),
     # The same stencil drawn many times: in its own colour where it lies on a
-    # picture, in the page's colours elsewhere.
+    # picture or a kept colour, in the page's colours elsewhere.
     ("build/pdf.mjs",
      "    ctx.transform(scaleX, skewX, skewY, scaleY, 0, 0);\n    const mask = this._createMaskCanvas(opIdx, img);\n",
      "    ctx.transform(scaleX, skewX, skewY, scaleY, 0, 0);\n"
@@ -249,12 +287,14 @@ PATCHES = [
      "      maskCtx.fillStyle = isPatternFill ? fillColor.getPattern(maskCtx, this, getCurrentTransformInverse(ctx), PathType.FILL, opIdx) : fillColor;\n",
      "      maskCtx.fillStyle = isPatternFill ? fillColor.getPattern(maskCtx, this, getCurrentTransformInverse(ctx), PathType.FILL, opIdx)\n"
      "        : readerStencilColour(this, transform, fillColor); // Firefox PDF Reader\n"),
-    # A stencil of one pixel fills its whole box.
+    # A stencil of one pixel fills its whole box: a filled rectangle.
     ("build/pdf.mjs",
      "    this.ctx.fillRect(0, 0, 1, 1);\n",
-     "    const readerSaved = readerKeepColours(this, readerUnitBox(getCurrentTransform(this.ctx))); // Firefox PDF Reader\n"
+     "    const readerBox = readerUnitBox(getCurrentTransform(this.ctx)); // Firefox PDF Reader\n"
+     "    const readerSaved = readerKeepColours(this, readerBox);\n"
      "    this.ctx.fillRect(0, 0, 1, 1);\n"
-     "    readerPutBack(readerSaved);\n"),
+     "    readerPutBack(readerSaved);\n"
+     "    readerFill(this, readerBox, readerSaved !== null);\n"),
     # The reader's settings (reader.mjs), read just before the viewer starts.
     ("web/viewer.html",
      '  <script src="viewer.mjs" type="module"></script>\n',
@@ -278,7 +318,8 @@ Firefox PDF Reader changed it with tools/make_viewer.py in its repository
 - left out: the source maps (*.map) and the sample PDF;
 - build/pdf.mjs: {sum(1 for p in PATCHES if p[0] == "build/pdf.mjs")} changes, each marked "Firefox PDF Reader": pages are drawn
   black with white text, pictures in their own colours, and text, lines and
-  stencils drawn on a picture in their own colours;
+  stencils drawn on a picture or on a colour that stays as the PDF has it in
+  their own colours;
 - web/viewer.html: reads the reader's settings, web/reader.mjs, before the
   viewer starts;
 - added: web/reader.mjs (the reader's settings, MIT License), NOTICE and
