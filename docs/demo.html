@@ -44,7 +44,7 @@
 // The reader's own copy of pdf.js (viewer/ in the repository, at the commit
 // named here), which draws pages black with white text and leaves pictures
 // as they are
-const VIEWER = 'https://cdn.jsdelivr.net/gh/Gregory-Schwing-MD-PhD/firefox-pdf-reader@9c87408788be03bb64e1b76393978ad373f3ed1a/viewer';
+const VIEWER = 'https://cdn.jsdelivr.net/gh/Gregory-Schwing-MD-PhD/firefox-pdf-reader@ce2fc8813acb72cce16f3a7d82cbbad21494f28f/viewer';
 const pdfjsLib = await import(VIEWER + '/build/pdf.mjs');
 (async () => {
   pdfjsLib.GlobalWorkerOptions.workerSrc = VIEWER + '/build/pdf.worker.mjs';
